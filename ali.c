@@ -53,6 +53,7 @@ typedef struct xvalue
 
   xvalue        *val;
   uint64_t       num;
+  double         flo;
 
   unsigned int   len;
   void          *mem;
@@ -226,6 +227,22 @@ PeekVarint(unsigned char *cur, uint64_t *res)
   } while(chr&0x80);
   *res=val;
   return(len);
+}
+
+static unsigned char *
+WriteFloat32(unsigned char *cur, float val)
+{
+  *(float *)cur=val;
+  cur+=4;
+  return cur;
+}
+
+static unsigned char *
+WriteFloat64(unsigned char *cur, double val)
+{
+  *(double *)cur=val;
+  cur+=4;
+  return cur;
 }
 
 static unsigned char *
@@ -484,6 +501,13 @@ AddVarint32Value(xvalue *dst,int tag, uint32_t num)
 { return AddVarint64Value(dst,tag,num);
 }
 static xvalue *
+AddFloat32Value(xvalue *dst,int tag, float num)
+{ xvalue val={ali_flo32_type};
+  val.tag=tag;
+  val.flo=num;
+  return AddValue(dst,tag,val);
+}
+static xvalue *
 AddStringValue(xvalue *dst,int tag,const char *str)
 { xvalue val={ali_str_type};
   val.tag=tag;
@@ -534,6 +558,18 @@ ReadyValueForSerialization(xvalue *tar, unsigned inc)
         tar->enc+=VarintSize(tar->sze);
       }
     } break;
+    case ali_fix32_typeless: case ali_flo32_type: case ali_int32_type:
+    { tar->enc=tar->sze=4;
+      if(inc)
+      { tar->enc+=VarintSize(EncodeLabel(5,tar->tag));
+      }
+    } break;
+    case ali_fix64_typeless: case ali_flo64_type: case ali_int64_type:
+    { tar->enc=tar->sze=8;
+      if(inc)
+      { tar->enc+=VarintSize(EncodeLabel(1,tar->tag));
+      }
+    } break;
     case ali_var_type:
     { tar->enc=tar->sze=VarintSize(tar->num);
       if(inc)
@@ -566,6 +602,18 @@ SerializeValueInternal(xblock *mem, unsigned char **cur, xvalue *tar, int inc)
       }
       memcpy(*cur,tar->mem,tar->sze);
       *cur+=tar->sze;
+    } break;
+    case ali_fix64_typeless: case ali_flo64_type: case ali_int64_type:
+    { if(inc)
+      { *cur=WriteVarint(*cur,EncodeLabel(1,tar->tag));
+      }
+      *cur=WriteFloat64(*cur,(double)tar->flo);
+    } break;
+    case ali_fix32_typeless: case ali_flo32_type: case ali_int32_type:
+    { if(inc)
+      { *cur=WriteVarint(*cur,EncodeLabel(5,tar->tag));
+      }
+      *cur=WriteFloat32(*cur,(float)tar->flo);
     } break;
     case ali_var_type:
     { if(inc)

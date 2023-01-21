@@ -5,9 +5,6 @@
 // ReturnTextureMemory(SomeTexture);
 
 // TODO(RJ):
-// Add an option to record commands, write them to file and then re-use those commands
-// on bot start, to avoid having to restart the game each time ...
-// TODO(RJ):
 // Fix proper shader for draw calls ...
 // TODO(RJ):
 // Fix text rendering ...
@@ -15,6 +12,12 @@
 // Fix gui layering ...
 // TODO(RJ):
 // Fix latent input ...
+
+
+// Todo: if the dx device were to fail during game startup, the variable config file
+// could end up being corrupted because the game didn't have time to write out proper data
+// or for some other reason, so stay on the look out, you might have to delete the Variables.txt file ...
+
 
 #define ZEN_APPMODE_WINDOWED
 #include "brazen.h"
@@ -26,7 +29,7 @@ static Unit *
 GetUnitByType(AlistarContext *ctx, int type)
 {
   ObservationRaw *raw;
-  raw=&ctx->last_response.Observation.observation.raw_data;
+  raw=&ctx->last_response.Observation.observation.RawData;
 
   Unit *units;
   units=raw->units;
@@ -43,7 +46,7 @@ GetUnitByType(AlistarContext *ctx, int type)
 
 
 static i32
-ZenBackground(ZenCore *Core, void*)
+ZenBackgroundFunc(ZenCore *Core, void*)
 {
   AlistarEstablishConnection(&Ali,true,5679);
 
@@ -53,11 +56,12 @@ ZenBackground(ZenCore *Core, void*)
 static void
 ZenMain(int _, char **)
 {
-  AlistarCreateContext(&Ali);
 
-  Zen.Scheduler.BackgroundThreadFunction=ZenBackground;
   ZenInitialize({}, L"Alistar Command Center");
 
+  AlistarCreateContext(&Ali);
+
+  ZenBackground(ZenBackgroundFunc);
 
   ZenTexture
     *TerrainTexture=NULL,
@@ -77,6 +81,15 @@ ZenMain(int _, char **)
   CreepTextureView={ {0,0, 16 * 64, 16 * 32}, "Creep" };
 
 
+  // TODO(RJ):
+  Ali.Game.Workers.CountMin = 12;
+  Ali.Game.Minerals = 50;
+  Ali.Game.Vespene  = 0;
+
+  Point2D build_location;
+  (void) build_location;
+
+
   while(! Zen.Quitted)
   { ZenWindow *Window;
     Window=ZenGetActiveWindow();
@@ -85,32 +98,80 @@ ZenMain(int _, char **)
     Glui=&Zen.Graphics.ImGlui;
     ZenFontDebugUI(Glui);
 
-
     if(AlistarTick(&Ali))
     {
+
+      VisibilityTexture=CopyImageDataToTexture(&Zen,VisibilityTexture,Ali.last_response.Observation.observation.RenderData.Map);
+#if 0
       Unit *cc;
       cc=GetUnitByType(&Ali,18);
 
+      static int sent_chat;
+      if(!sent_chat)
+      { sent_chat=1;
+        AlistarSendChat(&Ali,CHANNEL_BROADCAST,"gl hf");
+
+
+        build_location={cc->pos.x, cc->pos.y};
+        build_location.x += 3;
+        build_location.y += 3;
+      }
+
+
       if(cc)
-      { int order_count;
-        order_count=sb_count(cc->orders);
+      {
+        int32_t SupplyMin;
+        SupplyMin=UnitArrayCount(&Ali.Game.Workers);
 
-        if(!order_count)
+        int32_t SupplyMax;
+        SupplyMax=15+UnitArrayCount(&Ali.Game.SupplyDepots)*8;
+
+
+        if(SupplyMin+Ali.Game.WorkersQueued>=SupplyMax+Ali.Game.SupplyDepotsQueued*8)
         {
-          static int sent_chat;
+          if(Ali.Game.Minerals>=100)
+          {
+            // Todo: Get nearest SCV ...
+            Unit *scv;
+            scv=GetUnitByType(&Ali,45);
 
-          if(!sent_chat)
-          { sent_chat=1;
+            AlistarRequestBuildDepot(&Ali,scv->tag,build_location);
 
-            AlistarSendChat(&Ali,CHANNEL_BROADCAST,"gl hf");
+            build_location.x += 3;
+            build_location.y += 3;
+
+            Response res;
+            if(!AwaitResponseOfType(&Ali.conn_queue,&res,RESPONSE_TAG_ACTION))
+            { __debugbreak();
+            }
+
+            Ali.Game.Minerals-=100;
+            Ali.Game.SupplyDepotsQueued++;
           }
+        }
+        if(SupplyMin+Ali.Game.WorkersQueued<SupplyMax)
+        { if(Ali.Game.Minerals>=50)
+          { if(!Ali.Game.WorkersQueued)
+            { AlistarRequestTrainSCV(&Ali,cc->tag);
 
-          AlistarRequestTrainSCV(&Ali,cc->tag);
+              Response res;
+              if(AwaitResponseOfType(&Ali.conn_queue,&res,RESPONSE_TAG_ACTION))
+              { ActionResult result;
+                result=res.Action.results[0];
+
+                if(result==ActionResultSuccess)
+                { Ali.Game.WorkersQueued++;
+                  Ali.Game.Minerals-=50;
+                } else
+                { __debugbreak();
+                }
+              }
+            }
+          }
         }
       }
+#endif
     }
-
-
     if(0)
     {
 #if 0
@@ -129,6 +190,15 @@ ZenMain(int _, char **)
 #endif
     }
 
+    if(VisibilityTexture)
+    {
+      VisibilityTextureView.Location.Max.X=VisibilityTexture->DimenX;
+      VisibilityTextureView.Location.Max.Y=VisibilityTexture->DimenY;
+      if(ZenGluiPushWindow(Glui, &VisibilityTextureView))
+      {   ZenGluiTextureView(Glui, NULL, 0, {VisibilityTexture->DimenX,VisibilityTexture->DimenY}, VisibilityTexture);
+        ZenGluiPullWindow(Glui);
+      }
+    }
 
 #if 0
     if(TerrainTexture)
@@ -161,15 +231,6 @@ ZenMain(int _, char **)
       }
     }
 
-    if(VisibilityTexture)
-    {
-      VisibilityTextureView.Location.Max.X=VisibilityTexture->DimenX;
-      VisibilityTextureView.Location.Max.Y=VisibilityTexture->DimenY;
-      if(ZenGluiPushWindow(Glui, &VisibilityTextureView))
-      {   ZenGluiTextureView(Glui, NULL, 0, {VisibilityTexture->DimenX,VisibilityTexture->DimenY}, VisibilityTexture);
-        ZenGluiPullWindow(Glui);
-      }
-    }
 
     if(CreepTexture)
     {

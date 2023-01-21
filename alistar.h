@@ -4,19 +4,18 @@
 #include "stretchy_buffer.h"
 #include "ali.c"
 
+#define ALISTAR_TO_STRING(A) #A
+#define ALISTAR_STRING_CONCAT(A,B) A##B
+
 #define ALISTAR_PARSE_FUNCTION static
 
-// Note: common types, these come from zen:: in my case ...
-typedef i32x2 Point2DI, Size2DI;
-typedef f32x2 Point2D;
-typedef f32x3 Point3D;
-typedef i32x4 RectangleI;
 
 // Note: you must define this function for your own backend
 static int
 AlistarSendRequest(struct AlistarContext *, xvalue *);
 
 
+// Note: these are functions used by the api
 static int
 AlistarSendPayload(struct AlistarContext *, int tag, xvalue *);
 
@@ -100,14 +99,167 @@ AlistarSendPayload(struct AlistarContext *, int tag, xvalue *);
 #define SELECT_ADD_ALL_TYPE 4 // Equivalent to shift+control+click. Selects all units of a given type.
 
 
+// Note: common types, these come from zen:: in my case ...
+typedef i32x2 Point2DI, Size2DI;
+typedef f32x2 Point2D;
+typedef f32x3 Point3D;
+typedef i32x4 RectangleI;
 
-
+ALISTAR_PARSE_FUNCTION void
+ParsePoint2DI(xstate *read, Point2DI *val)
+{ ZeroMemory(val,sizeof(*val));
+  ForMessageField(read)
+  { case 1: GetVarintValue(read,(unsigned int*)&val->x); break;// TODO(RJ):
+    case 2: GetVarintValue(read,(unsigned int*)&val->y); break;// TODO(RJ):
+  }
+}
+ALISTAR_PARSE_FUNCTION void
+ParsePoint2D(xstate *read, Point2D *val)
+{ ZeroMemory(val,sizeof(*val));
+  ForMessageField(read)
+  { case 1: GetFloat32Value(read,&val->x); break;
+    case 2: GetFloat32Value(read,&val->y); break;
+  }
+}
+ALISTAR_PARSE_FUNCTION void
+ParsePoint3D(xstate *read, Point3D *val)
+{ ZeroMemory(val,sizeof(*val));
+  ForMessageField(read)
+  { case 1: GetFloat32Value(read,&val->x); break;// TODO(RJ):
+    case 2: GetFloat32Value(read,&val->y); break;// TODO(RJ):
+    case 3: GetFloat32Value(read,&val->z); break;// TODO(RJ):
+  }
+}
+ALISTAR_PARSE_FUNCTION void
+ParseSize2DI(xstate *read, Size2DI *val)
+{ return ParsePoint2DI(read,val);
+}
+ALISTAR_PARSE_FUNCTION void
+ParseRectangleI(xstate *read, RectangleI *val)
+{ ZeroMemory(val,sizeof(*val));
+  ForMessageField(read)
+  { case 1: ParsePoint2DI(read,&val->min); break;
+    case 2: ParsePoint2DI(read,&val->max); break;
+  }
+}
 typedef struct ImageData
 { unsigned int   bits_per_pixel;
   Size2DI        size;
   unsigned char *bytes;
 } ImageData;
-
+ALISTAR_PARSE_FUNCTION void
+ParseImageData(xstate *read, ImageData *val)
+{ ZeroMemory(val,sizeof(*val));
+  ForMessageField(read)
+  { case 1: GetVarintValue(read,&val->bits_per_pixel); break;
+    case 2: ParseSize2DI(read,  &val->size);    break;
+    case 3: GetBytesValue(read, &val->bytes);  break;
+  }
+}
+typedef struct AliFeatureLayers
+{ ImageData HeightMap;                 // uint8. Terrain height. World space units of [-200, 200] encoded into [0, 255].
+  ImageData VisibilityMap;             // uint8. 0=Hidden, 1=Fogged, 2=Visible, 3=FullHidden
+  ImageData Creep;                     // 1-bit. Zerg creep.
+  ImageData Power;                     // 1-bit. Protoss power.
+  ImageData PlayerId;                  // uint8. Participants: [1, 15] Neutral: 16
+  ImageData UnitType;                  // int32. Unique identifier for type of unit.
+  ImageData Selected;                  // 1-bit. Selected units.
+  ImageData UnitHitPoints;             // int32.
+  ImageData UnitHitPointsRatio;        // uint8. Ratio of current health to max health. [0%, 100%] encoded into [0, 255].
+  ImageData UnitEnergy;                // int32.
+  ImageData UnitEnergyRatio;           // uint8. Ratio of current energy to max energy. [0%, 100%] encoded into [0, 255].
+  ImageData UnitShields;               // int32.
+  ImageData UnitShieldsRatio;          // uint8. Ratio of current shields to max shields. [0%, 100%] encoded into [0, 255].
+  ImageData PlayerRelative;            // uint8. See "Alliance" enum in raw.proto. Range: [1, 4]
+  ImageData UnitDensityAa;             // uint8. Density of units overlapping a pixel, anti-aliased. [0.0, 16.0f] encoded into [0, 255].
+  ImageData UnitDensity;               // uint8. Count of units overlapping a pixel.
+  ImageData Effects;                   // uint8. Visuals of persistent abilities. (eg. Psistorm)
+  ImageData Hallucinations;            // 1-bit. Whether the unit here is a hallucination.
+  ImageData Cloaked;                   // 1-bit. Whether the unit here is cloaked. Hidden units will show up too, but with less details in other layers.
+  ImageData Blip;                      // 1-bit. Whether the unit here is a blip.
+  ImageData Buffs;                     // int32. One of the buffs applied to this unit. Extras are ignored.
+  ImageData BuffDuration;              // uint8. Ratio of buff remaining. [0%, 100%] encoded into [0, 255].
+  ImageData Active;                    // 1-bit. Whether the unit here is active.
+  ImageData BuildProgress;             // uint8. How far along the building is building something. [0%, 100%] encoded into [0, 255].
+  ImageData Buildable;                 // 1-bit. Whether a building can be built here.
+  ImageData Pathable;                  // 1-bit. Whether a unit can walk here.
+  ImageData Placeholder;               // 1-bit. Whether the unit here is a placeholder building to be constructed.
+} AliFeatureLayers;
+ALISTAR_PARSE_FUNCTION void
+AliParseFeatureLayers(xstate *read, AliFeatureLayers *val)
+{ ZeroMemory(val,sizeof(*val));
+  ForMessageField(read)
+  { case 1:   ParseImageData(read,&val->HeightMap);          break;
+    case 2:   ParseImageData(read,&val->VisibilityMap);      break;
+    case 3:   ParseImageData(read,&val->Creep);              break;
+    case 4:   ParseImageData(read,&val->Power);              break;
+    case 5:   ParseImageData(read,&val->PlayerId);           break;
+    case 6:   ParseImageData(read,&val->UnitType);           break;
+    case 7:   ParseImageData(read,&val->Selected);           break;
+    case 8:   ParseImageData(read,&val->UnitHitPoints);      break;
+    case 17:  ParseImageData(read,&val->UnitHitPointsRatio); break;
+    case 9:   ParseImageData(read,&val->UnitEnergy);         break;
+    case 18:  ParseImageData(read,&val->UnitEnergyRatio);    break;
+    case 10:  ParseImageData(read,&val->UnitShields);        break;
+    case 19:  ParseImageData(read,&val->UnitShieldsRatio);   break;
+    case 11:  ParseImageData(read,&val->PlayerRelative);     break;
+    case 14:  ParseImageData(read,&val->UnitDensityAa);      break;
+    case 15:  ParseImageData(read,&val->UnitDensity);        break;
+    case 20:  ParseImageData(read,&val->Effects);            break;
+    case 21:  ParseImageData(read,&val->Hallucinations);     break;
+    case 22:  ParseImageData(read,&val->Cloaked);            break;
+    case 23:  ParseImageData(read,&val->Blip);               break;
+    case 24:  ParseImageData(read,&val->Buffs);              break;
+    case 26:  ParseImageData(read,&val->BuffDuration);       break;
+    case 25:  ParseImageData(read,&val->Active);             break;
+    case 27:  ParseImageData(read,&val->BuildProgress);      break;
+    case 28:  ParseImageData(read,&val->Buildable);          break;
+    case 29:  ParseImageData(read,&val->Pathable);           break;
+    case 30:  ParseImageData(read,&val->Placeholder);        break;
+  }
+}
+typedef struct AliFeatureLayersMinimap
+{ ImageData HeightMap;
+  ImageData VisibilityMap;
+  ImageData Creep;
+  ImageData Camera;
+  ImageData PlayerId;
+  ImageData PlayerRelative;
+  ImageData Selected;
+  ImageData Alerts;
+  ImageData Buildable;
+  ImageData Pathable;
+  ImageData UnitType;
+} AliFeatureLayersMinimap;
+ALISTAR_PARSE_FUNCTION void
+AliParseFeatureLayersMinimap(xstate *read, AliFeatureLayersMinimap *val)
+{ ZeroMemory(val,sizeof(*val));
+  ForMessageField(read)
+  { case 1:  ParseImageData(read,&val->HeightMap);      break;
+    case 2:  ParseImageData(read,&val->VisibilityMap);  break;
+    case 3:  ParseImageData(read,&val->Creep);          break;
+    case 4:  ParseImageData(read,&val->Camera);         break;
+    case 5:  ParseImageData(read,&val->PlayerId);       break;
+    case 6:  ParseImageData(read,&val->PlayerRelative); break;
+    case 7:  ParseImageData(read,&val->Selected);       break;
+    case 9:  ParseImageData(read,&val->Alerts);         break;
+    case 10: ParseImageData(read,&val->Buildable);      break;
+    case 11: ParseImageData(read,&val->Pathable);       break;
+    case 8:  ParseImageData(read,&val->UnitType);       break;
+  }
+}
+typedef struct ObservationFeatureLayer
+{ AliFeatureLayers Renders;
+  AliFeatureLayersMinimap MinimapRenders;
+} ObservationFeatureLayer;
+ALISTAR_PARSE_FUNCTION void
+AliParseObservationFeatureLayer(xstate *read, ObservationFeatureLayer *val)
+{ ZeroMemory(val,sizeof(*val));
+  ForMessageField(read)
+  { case 1: AliParseFeatureLayers(read,&val->Renders);                break;
+    case 2: AliParseFeatureLayersMinimap(read,&val->MinimapRenders);  break;
+  }
+}
 // Action Types ...
 typedef enum Alert
 { AlertError = 3,
@@ -133,13 +285,6 @@ typedef enum Alert
   VespeneExhausted = 21,
   WarpInComplete = 22,
 } Alert;
-
-#if defined(CODE) || defined(NAME)
-# error
-#endif
-
-#define ALISTAR_TO_STRING(A) #A
-#define ALISTAR_STRING_CONCAT(A,B) A##B
 
 typedef enum ActionResult
 {
@@ -372,19 +517,6 @@ typedef struct ObservationRaw
   // Effect effects;    // repeated:5;
   // RadarRing radar;   // repeated:6;
 } ObservationRaw;
-typedef struct Observation
-{ uint32_t        game_loop;
-  PlayerCommon    player_common;
-  Alert          *alerts;
-  ObservationRaw  raw_data;
-} Observation;
-typedef struct ResponseObservation
-{ Action       *actions; // array
-  ErrorAction  *error_actions; // array
-  Observation   observation;
-  PlayerResult *player_results; // array
-  ChatReceived *chats; // array
-} ResponseObservation;
 typedef struct ResponseAction
 { ActionResult *results; // array
 } ResponseAction;
@@ -414,58 +546,24 @@ typedef struct ResponseJoinGame
 typedef struct ResponseAvailableMaps
 { MapName *maps;
 } ResponseAvailableMaps;
-typedef struct Response
-{
-union
-{ ResponseGameInfo      GameInfo;
-  ResponseCreateGame    CreateGame;
-  ResponseJoinGame      JoinGame;
-  ResponseAvailableMaps AvailableMaps;
-  ResponseObservation   Observation;
-  ResponseAction        Action;
-};
-  int Status;
-  int Type;
-  unsigned int Id;
-  char *Error;
-} Response;
-
 typedef struct RequestAction
 { Action *actions;
 } RequestAction;
-
 typedef struct Request
 { union
   { RequestAction action;
   };
 } Request;
-
-typedef struct AlistarQueue
-{ int64_t   CountMax;
-  int64_t   CountMin;
-  Response  *Array;
-  void      *Mutex;
-  void      *Event;
-} AlistarQueue;
-
-typedef struct AlistarContext
-{
-  ZenSystemProcess  proc;
-  mg_connection   * conn;
-  const char      * conn_addr;
-  int32_t           conn_port;
-  AlistarQueue      conn_queue;
-  Response          last_response;
-  int32_t           requested_obs;
-  int32_t           ready_for_obs;
-  struct
-  { int32_t   loop;
-    int32_t   worker_count;
-    Unit     *my_worker_units;
-  } Game;
-} AlistarContext;
-
-
+typedef struct ResponseQueryPathing
+{ float distance; // optional:1  Note: 0 if no path exists
+} ResponseQueryPathing;
+typedef struct ResponseQueryBuildingPlacement
+{ ActionResult result; // optional:1
+} ResponseQueryBuildingPlacement;
+typedef struct ResponseQuery
+{ ResponseQueryPathing           *pathing;    // repeated:1;
+  ResponseQueryBuildingPlacement *placements; // repeated:3;
+} ResponseQuery;
 static int
 RequestObservation(AlistarContext *ctx, int disable_fog, int game_loop);
 static i32
@@ -477,63 +575,8 @@ RequestCreateGame(AlistarContext *ctx);
 static i32
 RequestJoinGameAsParticipant(AlistarContext *ctx, int race, const char *name);
 
-
-ALISTAR_PARSE_FUNCTION void
-ParsePoint2DI(xstate *read, Point2DI *val);
-ALISTAR_PARSE_FUNCTION void
-ParsePoint2D(xstate *read, Point2D *val);
-ALISTAR_PARSE_FUNCTION void
-ParsePoint3D(xstate *read, Point3D *val);
-ALISTAR_PARSE_FUNCTION void
-ParseSize2DI(xstate *read, Size2DI *val);
-ALISTAR_PARSE_FUNCTION void
-ParseRectangleI(xstate *read, RectangleI *val);
-ALISTAR_PARSE_FUNCTION void
-ParseImageData(xstate *read, ImageData *val);
-ALISTAR_PARSE_FUNCTION void
-ParsePlayerInfo(xstate *read, PlayerInfo *val);
-ALISTAR_PARSE_FUNCTION void
-ParseResponseCreateGame(xstate *read, ResponseCreateGame *val);
-ALISTAR_PARSE_FUNCTION void
-ParseResponseJoinGame(xstate *read, ResponseJoinGame *val);
-ALISTAR_PARSE_FUNCTION void
-ParsePlayerCommon(xstate *read, PlayerCommon *val);
-ALISTAR_PARSE_FUNCTION void
-ParseStartRaw(xstate *read, StartRaw *val);
-ALISTAR_PARSE_FUNCTION void
-ParseResponseGameInfo(xstate *read, ResponseGameInfo *val);
-ALISTAR_PARSE_FUNCTION void
-ParseResponseAvailableMaps(xstate *read, ResponseAvailableMaps *val);
-ALISTAR_PARSE_FUNCTION void
-ParseActionChat(xstate *read, ActionChat *val);
-ALISTAR_PARSE_FUNCTION void
-ParseAction(xstate *read, Action *val);
-ALISTAR_PARSE_FUNCTION void
-ParseErrorAction(xstate *read, ErrorAction *val);
-ALISTAR_PARSE_FUNCTION void
-ParseChatReceived(xstate *read, ChatReceived *val);
-ALISTAR_PARSE_FUNCTION void
-ParseUnit(xstate *read, Unit *val);
-ALISTAR_PARSE_FUNCTION void
-ParseMapState(xstate *read, MapState *val);
-ALISTAR_PARSE_FUNCTION void
-ParseObservationRaw(xstate *read, ObservationRaw *val);
-ALISTAR_PARSE_FUNCTION void
-ParseObservation(xstate *read, Observation *val);
-ALISTAR_PARSE_FUNCTION void
-ParsePlayerResult(xstate *read, PlayerResult *val);
-ALISTAR_PARSE_FUNCTION void
-ParseResponseObservation(xstate *read, ResponseObservation *val);
-ALISTAR_PARSE_FUNCTION void
-ParseResponse(Response *info, size_t size, const void *data);
-
 static const wchar_t *
 AlistarActionResultW(ActionResult result);
-
-
-
-
-
 
 static xvalue
 CreateParticipantPlayerSetup(const char *name)
@@ -554,10 +597,58 @@ CreateComputerPlayerSetup(int race, int diff, int build, const char *name)
   return req;
 }
 static xvalue
+ValuePoint2D(Point2D val)
+{ xvalue res={ali_msg_type};
+  AddFloat32Value(&res,1,val.x);
+  AddFloat32Value(&res,2,val.y);
+  return res;
+}
+static xvalue
+ValueSize2DI(Size2DI val)
+{ xvalue res={ali_msg_type};
+  AddVarint32Value(&res,1,val.x);
+  AddVarint32Value(&res,2,val.y);
+  return res;
+}
+static xvalue
+AliCameraSetupValueNoMinimap(
+  Size2DI resolution,
+  float   width,
+  int     crop_to_playable_area,
+  int     allow_cheating_layers )
+{
+  xvalue req={ali_msg_type};
+  AddValue(&req,2,ValueSize2DI(resolution));
+  AddFloat32Value(&req,1,width);
+  AddBoolValue(&req,4,crop_to_playable_area);
+  AddBoolValue(&req,8,allow_cheating_layers);
+  return req;
+}
+static xvalue
+AliCameraSetupValue(
+  Size2DI resolution,
+  Size2DI minimap_resolution,
+  float   width,
+  int     crop_to_playable_area,
+  int     allow_cheating_layers )
+{
+  xvalue req={ali_msg_type};
+  AddValue(&req,2,ValueSize2DI(resolution));
+  AddValue(&req,3,ValueSize2DI(minimap_resolution));
+  AddFloat32Value(&req,1,width);
+  AddBoolValue(&req,4,crop_to_playable_area);
+  AddBoolValue(&req,8,allow_cheating_layers);
+  return req;
+}
+static xvalue
 CreateDefaultInterfaceOptions()
 { xvalue req={ali_msg_type};
-  AddBoolValue(&req, /*tag*/1, TRUE); // raw: 1
-  AddBoolValue(&req, /*tag*/8, TRUE); // show_placeholders: 8
+  AddBoolValue(&req,1,TRUE);
+  AddBoolValue(&req,8,TRUE);
+  // AddValue(&req,3,AliCameraSetupValue({255,255},{128,128},8.f,FALSE,TRUE));
+  AddValue(&req,4,AliCameraSetupValueNoMinimap({512,512},8.f,FALSE,TRUE));
+
+  //AddValue(&req,4,AliDefaultCameraSetupValue());
   return req;
 }
 static i32
@@ -596,49 +687,26 @@ RequestObservation(AlistarContext *ctx, int disable_fog, int game_loop)
 }
 // Parsing functions
 ALISTAR_PARSE_FUNCTION void
-ParsePoint2DI(xstate *read, Point2DI *val)
+ParseResponseQueryPathing(xstate *read, ResponseQueryPathing *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: GetVarintValue(read,(unsigned int*)&val->x); break;// TODO(RJ):
-    case 2: GetVarintValue(read,(unsigned int*)&val->y); break;// TODO(RJ):
+  { case 1: GetFloat32Value(read,&val->distance); break;
+  }
+}
+// Parsing functions
+ALISTAR_PARSE_FUNCTION void
+ParseResponseQueryBuildingPlacement(xstate *read, ResponseQueryBuildingPlacement *val)
+{ ZeroMemory(val,sizeof(*val));
+  ForMessageField(read)
+  { case 1: GetEnumValue(read,&val->result); break;
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParsePoint2D(xstate *read, Point2D *val)
+ParseResponseQuery(xstate *read, ResponseQuery *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: GetFloat32Value(read,&val->x); break;
-    case 2: GetFloat32Value(read,&val->y); break;
-  }
-}
-ALISTAR_PARSE_FUNCTION void
-ParsePoint3D(xstate *read, Point3D *val)
-{ ZeroMemory(val,sizeof(*val));
-  ForMessageField(read)
-  { case 1: GetFloat32Value(read,&val->x); break;// TODO(RJ):
-    case 2: GetFloat32Value(read,&val->y); break;// TODO(RJ):
-    case 3: GetFloat32Value(read,&val->z); break;// TODO(RJ):
-  }
-}
-ALISTAR_PARSE_FUNCTION void
-ParseSize2DI(xstate *read, Size2DI *val)
-{ return ParsePoint2DI(read,val);
-}
-ALISTAR_PARSE_FUNCTION void
-ParseRectangleI(xstate *read, RectangleI *val)
-{ ZeroMemory(val,sizeof(*val));
-  ForMessageField(read)
-  { case 1: ParsePoint2DI(read,&val->min); break;
-    case 2: ParsePoint2DI(read,&val->max); break;
-  }
-}
-ALISTAR_PARSE_FUNCTION void
-ParseImageData(xstate *read, ImageData *val)
-{ ZeroMemory(val,sizeof(*val));
-  ForMessageField(read)
-  { case 1: GetVarintValue(read,&val->bits_per_pixel); break;
-    case 2: ParseSize2DI(read,  &val->size);    break;
-    case 3: GetBytesValue(read, &val->bytes);  break;
+  { case 1: ParseResponseQueryPathing(read,sb_add(val->pathing,1)); break;
+    case 3: ParseResponseQueryBuildingPlacement(read,sb_add(val->placements,1)); break;
   }
 }
 // Mainly for debugging reasons
@@ -898,15 +966,45 @@ ParseObservationRaw(xstate *read, ObservationRaw *val)
     case 2: ParseUnit(read,sb_add(val->units,1)); break;
   }
 }
+typedef struct ObservationRender
+{ ImageData Map;
+  ImageData Minimap;
+} ObservationRender;
+ALISTAR_PARSE_FUNCTION void
+AliParseObservationRender(xstate *read, ObservationRender *val)
+{ ZeroMemory(val,sizeof(*val));
+  ForMessageField(read)
+  { case 1: ParseImageData(read,&val->Map);     break;
+    case 2: ParseImageData(read,&val->Minimap); break;
+  }
+}
+typedef struct Observation
+{ uint32_t                   GameLoop;
+  PlayerCommon               PlayerCommon;
+  Alert                    * Alerts;
+  ObservationRaw             RawData;
+  ObservationFeatureLayer    FeatureLayerData;
+  ObservationRender          RenderData;
+} Observation;
 ALISTAR_PARSE_FUNCTION void
 ParseObservation(xstate *read, Observation *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: ParsePlayerCommon(read,&val->player_common); break;
-    case 9: GetVarintValue(read,&val->game_loop);        break;
-    case 5: ParseObservationRaw(read,&val->raw_data);    break;
+  { case 9:  GetVarintValue(read,&val->GameLoop);                          break;
+    case 1:  ParsePlayerCommon(read,&val->PlayerCommon);                   break;
+    case 10: GetEnumValue(read,sb_add(val->Alerts,1));                     break;
+    case 5:  ParseObservationRaw(read,&val->RawData);                      break;
+    case 6:  AliParseObservationFeatureLayer(read,&val->FeatureLayerData); break;
+    case 7:  AliParseObservationRender(read,&val->RenderData);             break;
   }
 }
+typedef struct ResponseObservation
+{ Action       *actions; // array
+  ErrorAction  *error_actions; // array
+  Observation   observation;
+  PlayerResult *player_results; // array
+  ChatReceived *chats; // array
+} ResponseObservation;
 ALISTAR_PARSE_FUNCTION void
 ParseResponseObservation(xstate *read, ResponseObservation *val)
 { ZeroMemory(val,sizeof(*val));
@@ -937,6 +1035,22 @@ ParseResponseAction(xstate *read, ResponseAction *val)
     } break;
   }
 }
+typedef struct Response
+{
+union
+{ ResponseGameInfo      GameInfo;
+  ResponseCreateGame    CreateGame;
+  ResponseJoinGame      JoinGame;
+  ResponseAvailableMaps AvailableMaps;
+  ResponseObservation   Observation;
+  ResponseAction        Action;
+  ResponseQuery         Query;
+};
+  int Status;
+  int Type;
+  unsigned int Id;
+  char *Error;
+} Response;
 ALISTAR_PARSE_FUNCTION void
 ParseResponse(Response *info, size_t size, const void *data)
 { ZeroMemory(info,sizeof(*info));
@@ -971,11 +1085,69 @@ ParseResponse(Response *info, size_t size, const void *data)
     { ParseResponseAction(&read,&info->Action);
       info->Type=RESPONSE_TAG_ACTION;
     } break;
+    case RESPONSE_TAG_QUERY:
+    { ParseResponseQuery(&read,&info->Query);
+      info->Type=RESPONSE_TAG_QUERY;
+    } break;
     default:
     { TRACE_W("unknown response: %i", GetTag(&read));
     } break;
   }
 }
+
+
+typedef struct AlistarUnitArray
+{
+  int32_t   CountMax;
+  int32_t   CountMin;
+  Unit    * Array;
+  void    * Mutex;
+} AlistarUnitArray;
+typedef struct AlistarQueue
+{ int64_t   CountMax;
+  int64_t   CountMin;
+  Response  *Array;
+  void      *Mutex;
+  void      *Event;
+} AlistarQueue;
+typedef struct AlistarContext
+{
+  ZenSystemProcess  proc;
+  mg_connection   * conn;
+  const char      * conn_addr;
+  int32_t           conn_port;
+  AlistarQueue      conn_queue;
+  Response          last_response;
+  int32_t           requested_obs;
+  int32_t           ready_for_obs;
+
+
+  struct
+  { int32_t loop;
+
+    int32_t Supply;
+
+    AlistarUnitArray CommandCenters;
+    int32_t WorkersQueued;
+
+    AlistarUnitArray SupplyDepots;
+    int32_t SupplyDepotsQueued;
+
+    AlistarUnitArray Workers;
+    AlistarUnitArray WorkersIdling;
+    AlistarUnitArray WorkersHarvesting;
+    AlistarUnitArray WorkersBuilding;
+    AlistarUnitArray WorkersRepairing;
+
+    AlistarUnitArray Army;
+
+
+    int Minerals;
+    int Vespene;
+
+  } Game;
+
+} AlistarContext;
 static int
 AlistarRequestTrainSCV(AlistarContext *ctx, uint64_t unit_tag)
 {
@@ -994,7 +1166,110 @@ AlistarRequestTrainSCV(AlistarContext *ctx, uint64_t unit_tag)
 
   return AlistarSendPayload(ctx,11,&request_action);
 }
+static int
+AlistarRequestBuildDepot(AlistarContext *ctx, uint64_t unit_tag, Point2D location)
+{ xvalue raw_unit_command={ali_msg_type};
+  AddVarint32Value(&raw_unit_command,1,319);
+  AddVarint64Value(&raw_unit_command,4,unit_tag);
+  AddValue(&raw_unit_command,2,ValuePoint2D(location));
 
+  xvalue action_raw={ali_msg_type};
+  AddValue(&action_raw,1,raw_unit_command);
+
+  xvalue action={ali_msg_type};
+  AddValue(&action,1,action_raw);
+
+  xvalue request_action={ali_msg_type};
+  AddValue(&request_action,1,action);
+
+  return AlistarSendPayload(ctx,11,&request_action);
+}
+static int
+AlistarQueryDistanceToFromUnit(AlistarContext *ctx, Unit *unit, Point2D pos)
+{
+  xvalue req_query_pathing={ali_msg_type};
+  AddVarint64Value(&req_query_pathing,2,unit->tag);
+  AddValue(&req_query_pathing,3,ValuePoint2D(pos));
+
+  xvalue req_query={ali_msg_type};
+  AddValue(&req_query,1,req_query_pathing);
+  return AlistarSendPayload(ctx,14,&req_query);
+}
+static int
+AlistarQueryBuildingPlacement(AlistarContext *ctx, int32_t ability_id, Point2D location)
+{
+  xvalue req_query_building_placement={ali_msg_type};
+  AddVarint32Value(&req_query_building_placement,1,ability_id);
+  AddValue(&req_query_building_placement,2,ValuePoint2D(location));
+
+  xvalue req_query={ali_msg_type};
+  AddValue(&req_query,3,req_query_building_placement);
+  return AlistarSendPayload(ctx,14,&req_query);
+}
+static int
+AlistarTryBuildStructure(
+  AlistarContext *ctx, uint64_t unit_tag, int32_t ability_id, Point2D location)
+{
+
+}
+#if 0
+static int
+AlistarTryBuildStructure(
+  AlistarContext *ctx, uint64_t unit_tag, int32_t ability_id, Point2D world_location)
+{
+    const ObservationInterface* observation = Observation();
+    Units workers = observation->GetUnits(Unit::Alliance::Self, IsUnit(unit_type));
+
+    //if we have no workers Don't build
+    if (workers.empty()) {
+        return false;
+    }
+
+    // Check to see if there is already a worker heading out to build it
+    for (const auto& worker : workers) {
+        for (const auto& order : worker->orders) {
+            if (order.ability_id == ability_type_for_structure) {
+                return false;
+            }
+        }
+    }
+
+    // If no worker is already building one, get a random worker to build one
+    const Unit* unit = GetRandomEntry(workers);
+
+    // Check to see if unit can make it there
+    if (Query()->PathingDistance(unit, location) < 0.1f) {
+        return false;
+    }
+    if (!isExpansion) {
+        for (const auto& expansion : expansions_) {
+            if (Distance2D(location, Point2D(expansion.x, expansion.y)) < 7) {
+                return false;
+            }
+        }
+    }
+    // Check to see if unit can build there
+    if (Query()->Placement(ability_type_for_structure, location)) {
+        Actions()->UnitCommand(unit, ability_type_for_structure, location);
+        return true;
+    }
+    return false;
+
+}
+static int
+AlistarTryBuildDepot(AlistarContext *ctx, uint64_t unit_tag)
+{
+  // Try and build a pylon. Find a random Probe and give it the order.
+  float rx = GetRandomScalar();
+  float ry = GetRandomScalar();
+  Point2D build_location = Point2D(staging_location_.x + rx * 15, staging_location_.y + ry * 15);
+
+  AlistarTryBuildStructure(ABILITY_ID::BUILD_PYLON, UNIT_TYPEID::PROTOSS_PROBE, build_location)
+
+  return ;
+
+}
+#endif
 static int
 AlistarSendChat(AlistarContext *ctx, int32_t channel, const char *message)
 {

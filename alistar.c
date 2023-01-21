@@ -14,6 +14,82 @@
 #define ali_free(memory) mg_free(memory)
 #include "alistar.h"
 
+static int
+BitsToBytes(unsigned char *bytes, int bits)
+{ bytes[0]=0xff*(bits&0x80);bytes[4]=0xff*(bits&0x08);
+  bytes[1]=0xff*(bits&0x40);bytes[5]=0xff*(bits&0x04);
+  bytes[2]=0xff*(bits&0x20);bytes[6]=0xff*(bits&0x02);
+  bytes[3]=0xff*(bits&0x10);bytes[7]=0xff*(bits&0x01);
+  return 8;
+}
+
+// TODO(RJ): REMOVE FROM HERE
+// TODO(RJ): THIS IS TEMPORARY
+ZEN_FUNCTION ZenTexture // COMPILER(RJ): FORCEINLINE
+ZenCoreCreateSoftTextureForThisFrame(ZenCore *Core, i32 Format, i32 DimenX, i32 DimenY)
+{ void *Memory = ZenCoreFrameAlloc(Core, ZenComputeTrimmedSizeForTexture(Format, DimenX, DimenY));
+  ZenTexture Texture = ZenUnboundTexture(DE_CPU_ACCESS, Format, DimenX, DimenY, Memory);
+  // NOTE(RJ): ALLOCATIONS ARE ZEROED ALREADY, BUT I KNOW THAT'LL CHANGE!
+  ZenZeroTextureMemory(&Texture);
+  return Texture;
+}
+
+static ZenTexture
+AliConvertTexture(ZenCore *Core, ImageData data)
+{
+  ZenTexture tex={};
+  if(data.bits_per_pixel==1)
+  { tex=ZenCoreCreateSoftTextureForThisFrame(Core,PIXEL_FORMAT_RGB8,data.size.x,data.size.y);
+
+    unsigned char *loc,*cur,*end;
+    loc=tex.Single;
+    end=data.bytes+((data.size.x*data.size.y)>>3);
+    for(cur=data.bytes;cur<end;++cur)
+    { loc+=BitsToBytes(loc,*cur);
+    }
+  } else
+  if(data.bits_per_pixel==8)
+  { tex=ZenUnboundTexture(DE_GPU_ACCESS,PIXEL_FORMAT_RGB8,data.size.x,data.size.y,data.bytes);
+  } else
+  if(data.bits_per_pixel==24)
+  { tex=ZenCoreCreateSoftTextureForThisFrame(Core,PIXEL_FORMAT_RGBA8888,data.size.x,data.size.y);
+
+    unsigned char *loc,*cur,*end;
+    loc=tex.Single;
+
+    end=data.bytes+(data.size.x*data.size.y)*3;
+
+    for(cur=data.bytes;cur<end;cur+=3,loc+=4)
+    { loc[0]=cur[2];
+      loc[1]=cur[1];
+      loc[2]=cur[0];
+      loc[3]=0xff;
+    }
+  }
+
+  return tex;
+}
+
+static ZenTexture *
+CopyImageDataToTexture(ZenCore *Core, ZenTexture *Texture, ImageData data)
+{
+
+  if((data.size.x==0)||(data.size.y==0)||(data.bytes==0)||(data.bits_per_pixel==0)) return 0;
+
+  ZenTexture tex;
+  tex=AliConvertTexture(Core,data);
+
+  if(!Texture)
+  { Texture=ZenCoreCreateTexture(Core,DE_GPU_READ|DE_CPU_WRITE,tex.Format,tex.DimenX,tex.DimenY,tex.Memory);
+  } else
+  { if(ZenCoreBorrowTextureChronicle(Core, Texture, ZEN_WRITE))
+    { ZenCopyTexture(Texture, &tex);
+      ZenCoreReturnTextureChronicle(Core, Texture);
+    }
+  }
+
+  return Texture;
+}
 
 #define AliDequeueEventOfTypeAndNotifyAll(Queue,Value,Type) AliDequeueEventOfTypeAndNotifyAll_(ZenGenerateCallerInfo(),Queue,Value,Type)
 
@@ -95,8 +171,8 @@ AliQueueEventAndNotifyAll_(ZenCaller Caller, AlistarQueue *Queue, Response *Valu
   return 0;
 }
 
+#if 0
 #define AwaitResponseForever(Queue,Value) AwaitResponseForever_(ZenGenerateCallerInfo(),Queue,Value)
-
 static int
 AwaitResponseForever_(ZenCaller Caller, AlistarQueue *Queue, Response *Value)
 { while(!AliDequeueEventAndNotifyAll_(Caller,Queue,Value))
@@ -104,6 +180,7 @@ AwaitResponseForever_(ZenCaller Caller, AlistarQueue *Queue, Response *Value)
   }
   return 1;
 }
+#endif
 
 #define AwaitResponseOfType(Queue,Value,Type) AwaitResponseOfType_(ZenGenerateCallerInfo(),Queue,Value,Type)
 
@@ -112,8 +189,10 @@ AwaitResponseOfType_(ZenCaller Caller, AlistarQueue *Queue, Response *Value, int
 {
   if(!AliDequeueEventOfTypeAndNotifyAll_(Caller,Queue,Value,Type))
   { ZenConsumeNativeEvent(Queue->Event);
+    return AliDequeueEventOfTypeAndNotifyAll_(Caller,Queue,Value,Type);
   }
-  return AliDequeueEventOfTypeAndNotifyAll_(Caller,Queue,Value,Type);
+
+  return 1;
 }
 
 ALISTAR_PARSE_FUNCTION void
@@ -179,6 +258,12 @@ AlistarCreateContext(AlistarContext *ctx)
   {
     Response res;
     ParseResponse(&res,file_size,file_data);
+
+    ZenTexture tex;
+    tex=AliConvertTexture(&Zen,res.Observation.observation.RenderData.Map);
+
+    ZenWriteTextureToFile(&tex, "last_map.png");
+
   }
 
   return 1;
@@ -239,7 +324,7 @@ AlistarEstablishConnection(AlistarContext *ctx, int is_realtime, int port)
   conn_callbacks={};
   conn_context=mg_start(&conn_callbacks, NULL, conn_options);
 
-  ctx->proc=LaunchStarcraftProcess("G:\\StarCraft II",TRUE,addr,port);
+  ctx->proc=LaunchStarcraftProcess("G:\\StarCraft II",FALSE,addr,port);
 
   char errbuf[0x100];
   ZeroMemory(errbuf,sizeof(errbuf));
@@ -273,32 +358,113 @@ AlistarEstablishConnection(AlistarContext *ctx, int is_realtime, int port)
   return ctx->conn!=0;
 }
 
+static unsigned int
+UnitArrayCount(AlistarUnitArray *Array)
+{
+  return sb_count(Array->Array);
+}
+
+static void
+UnitArrayFree(AlistarUnitArray *Array)
+{
+  sb_free(Array->Array);
+  ZeroMemory(Array,sizeof(*Array));
+}
+
+static Unit *
+UnitArrayAdd(AlistarUnitArray *Array)
+{
+  Unit *res;
+  res=sb_add(Array->Array,1);
+  Array->CountMin++;
+
+  return res;
+}
 
 static int
 AlistarTick(AlistarContext *ctx)
 {
-  Response obs;
-#if 1
-  if(ctx->ready_for_obs)
-  { if(!ctx->requested_obs)
-    { ctx->requested_obs=1;
-      ctx->last_response.Type=0;
-      RequestObservation(ctx,TRUE,ctx->Game.loop);
-    } else
-    {
-      // Todo: handle all events in the queue ...
-      if(AliDequeueEventOfTypeAndNotifyAll(&ctx->conn_queue,&obs,RESPONSE_TAG_OBSERVATION))
-      { ctx->Game.loop++;
-        ctx->requested_obs=0;
+  if((ctx->ready_for_obs) && (!ctx->requested_obs))
+  { ctx->requested_obs=1;
+    RequestObservation(ctx,TRUE,ctx->Game.loop);
+  }
+
+  Response response;
+
+  // Todo: handle all events in the queue ...
+  if(AliDequeueEventOfTypeAndNotifyAll(&ctx->conn_queue,&response,RESPONSE_TAG_OBSERVATION))
+  {
+    UnitArrayFree(&ctx->Game.CommandCenters);
+    UnitArrayFree(&ctx->Game.SupplyDepots);
+    UnitArrayFree(&ctx->Game.Workers);
+    UnitArrayFree(&ctx->Game.WorkersIdling);
+    UnitArrayFree(&ctx->Game.WorkersHarvesting);
+    UnitArrayFree(&ctx->Game.WorkersBuilding);
+    UnitArrayFree(&ctx->Game.WorkersRepairing);
+
+    ctx->Game.WorkersQueued=0;
+    ctx->Game.SupplyDepotsQueued=0;
+
+    ctx->requested_obs=0;
+
+    ctx->Game.loop++;
+
+    Observation obs;
+    obs=response.Observation.observation;
+
+    ObservationRaw raw;
+    raw=obs.RawData;
+
+    Unit *unit_array;
+    unit_array=raw.units;
+
+    int unit_count;
+    unit_count=sb_count(unit_array);
+
+    for(int i=0;i<unit_count;++i)
+    { Unit *unit;
+      unit=unit_array+i;
+
+      if(unit->unit_type==18)
+      { *UnitArrayAdd(&ctx->Game.CommandCenters)=*unit;
+
+        for(int i=0;i<sb_count(unit->orders);++i)
+        { if(unit->orders[i].ability_id==524)
+          { ctx->Game.WorkersQueued++;
+          }
+        }
+      } else
+      if(unit->unit_type==19)
+      { *UnitArrayAdd(&ctx->Game.SupplyDepots)=*unit;
+      } else
+      if(unit->unit_type==45)
+      { *UnitArrayAdd(&ctx->Game.Workers)=*unit;
+
+        if(!sb_count(unit->orders))
+        { *UnitArrayAdd(&ctx->Game.WorkersIdling)=*unit;
+        } else
+        {
+          for(int i=0;i<sb_count(unit->orders);++i)
+          { if(unit->orders[i].ability_id==319)
+            { ctx->Game.SupplyDepotsQueued++;
+            }
+          }
+        }
       }
     }
-    return ctx->last_response.Type==RESPONSE_TAG_OBSERVATION;
-  }
-#endif
 
-  return ctx->ready_for_obs;
+
+    PlayerCommon common;
+    common=obs.PlayerCommon;
+    ctx->Game.Minerals=common.minerals;
+    ctx->Game.Vespene=common.vespene;
+  }
+
+  return ctx->last_response.Type==RESPONSE_TAG_OBSERVATION;
 }
 
+
+// Todo: this is something that a backend should implement
 static int
 FindStarcraftExecutableAndDllsDirectory(const char *inst, int arch64, char *exec, char *dlls)
 { if(!IsFileNameReal(inst))
@@ -332,6 +498,9 @@ LaunchStarcraftProcess(const char *inst, int arch64, const char *addr, int port)
   int res;
   res=FindStarcraftExecutableAndDllsDirectory(inst,arch64,exec,dlls);
 
+  // Note: if you have a double monitor setup this could be useful,
+  // however, if you have a faulty GPU card that can barely run
+  // two monitors at once, this could be useless ...
   if(!res) return {};
 
   sprintf_s(cmdl,sizeof(cmdl)," -listen %s -port %i -displayMode 0 -windowx 1921 -windowy 0",addr,port);
@@ -345,64 +514,6 @@ LaunchStarcraftProcess(const char *inst, int arch64, const char *addr, int port)
   return proc;
 }
 
-static int
-BitsToBytes(unsigned char *bytes, int bits)
-{ bytes[0]=0xff*(bits&0x80);bytes[4]=0xff*(bits&0x08);
-  bytes[1]=0xff*(bits&0x40);bytes[5]=0xff*(bits&0x04);
-  bytes[2]=0xff*(bits&0x20);bytes[6]=0xff*(bits&0x02);
-  bytes[3]=0xff*(bits&0x10);bytes[7]=0xff*(bits&0x01);
-  return 8;
-}
-
-// TODO(RJ): REMOVE FROM HERE
-// TODO(RJ): THIS IS TEMPORARY
-ZEN_FUNCTION ZenTexture // COMPILER(RJ): FORCEINLINE
-ZenCoreCreateSoftTextureForThisFrame(ZenCore *Core, i32 Format, i32 DimenX, i32 DimenY)
-{ void *Memory = ZenCoreFrameAlloc(Core, ZenComputeTrimmedSizeForTexture(Format, DimenX, DimenY));
-  ZenTexture Texture = ZenUnboundTexture(DE_CPU_ACCESS, Format, DimenX, DimenY, Memory);
-  // NOTE(RJ): ALLOCATIONS ARE ZEROED ALREADY, BUT I KNOW THAT'LL CHANGE!
-  ZenZeroTextureMemory(&Texture);
-  return Texture;
-}
-
-static ZenTexture
-ImageDataToUnboundTextureRGB8(ZenCore *Core, ImageData data)
-{
-  ZenTexture rgb8={};
-  if(data.bits_per_pixel==1)
-  { rgb8=ZenCoreCreateSoftTextureForThisFrame(Core,PIXEL_FORMAT_RGB8,data.size.x,data.size.y);
-
-    unsigned char *loc,*cur,*end;
-    loc=rgb8.Single;
-    end=data.bytes+((data.size.x*data.size.y)>>3);
-    for(cur=data.bytes;cur<end;++cur)
-    { loc+=BitsToBytes(loc,*cur);
-    }
-
-  } else
-  if(data.bits_per_pixel==8)
-  { rgb8=ZenUnboundTexture(DE_GPU_ACCESS,PIXEL_FORMAT_RGB8,data.size.x,data.size.y,data.bytes);
-  }
-  return rgb8;
-}
-
-static ZenTexture *
-CopyImageDataToTexture(ZenCore *Core, ZenTexture *Texture, ImageData data)
-{
-  ZenTexture rgb8;
-  rgb8=ImageDataToUnboundTextureRGB8(Core,data);
-
-  if(!Texture)
-  { Texture=ZenCoreCreateTexture(Core,DE_GPU_READ|DE_CPU_WRITE,PIXEL_FORMAT_RGB8,rgb8.DimenX,rgb8.DimenY,rgb8.Memory);
-  } else
-  { if(ZenCoreBorrowTextureChronicle(Core, Texture, ZEN_WRITE))
-    { ZenCopyTexture(Texture, &rgb8);
-      ZenCoreReturnTextureChronicle(Core, Texture);
-    }
-  }
-
-  return Texture;
-}
 
 
 #endif

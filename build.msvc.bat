@@ -6,4 +6,5 @@
 
 @SET myInclude=/I. /I.. /I..\detroit /I..\dr /I..\vendor\stb /Ivendor /Ivendor\civetweb\include /Ivendor\civetweb\src
 @SET mySourceFiles=main.c
-@CALL cl %myCompilerOptions% %myDebugOptions% %myInclude% %mySourceFiles% /link /SUBSYSTEM:WINDOWS %myLinkerOptions%
+@CALL cl %myCompilerOptions% %myDebugOptions% %myInclude% main.c /link /SUBSYSTEM:WINDOWS %myLinkerOptions%
+@CALL cl %myCompilerOptions% %myDebugOptions% %myInclude% simple.c /link /SUBSYSTEM:CONSOLE %myLinkerOptions%
