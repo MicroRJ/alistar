@@ -3,6 +3,7 @@ Experimental Standalone StartCraft II Bot API For The C Developer.
 
 ![Snapshot](media/alistar_0.1.PNG)
 
+
 ## Please note:
 - This is not a finished, nor tested product ...
 - There ARE some minor dependencies, these come from other personal projects and are to be eventually replaced ...
