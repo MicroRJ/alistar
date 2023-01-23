@@ -1,7 +1,7 @@
 # alistar
 Experimental Standalone StartCraft II Bot API For The C Developer.
 
-![Snapshot](media\alister_0.1.PNG)
+![Snapshot](media/alistar_0.1.PNG)
 
 ## Please note:
 - This is not a finished, nor tested product ...
