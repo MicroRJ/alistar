@@ -1,3 +1,4 @@
+@REM  Copyright(C) 2022-2023 Dayan Rodriguez, All rights reserved.
 @REM # For debug builds I can't compile with /Za because windows complains about it...
 @REM /MDd
 @SET myDebugOptions=/Od /MTd

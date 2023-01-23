@@ -1,11 +1,19 @@
-#if !defined(ALISTAR_HEADER)
-
+/*
+** Copyright(C) J. Dayan Rodriguez, 2022, All rights reserved.
+**
+** Alistar
+*/
+#ifndef ALISTAR_HEADER
 #define ALISTAR_HEADER
-#include "stretchy_buffer.h"
-#include "ali.c"
+
+
+#define ALISTAR_EXPAND_(A) A
+#define ALISTAR_EXPAND(A) ALISTAR_EXPAND_(A)
 
 #define ALISTAR_TO_STRING(A) #A
-#define ALISTAR_STRING_CONCAT(A,B) A##B
+#define ALISTAR_STRING_CONCAT_(A,B) A##B
+
+#define ALISTAR_STRING_CONCAT(A,B) ALISTAR_STRING_CONCAT_(A,B)
 
 #define ALISTAR_PARSE_FUNCTION static
 
@@ -109,8 +117,8 @@ ALISTAR_PARSE_FUNCTION void
 ParsePoint2DI(xstate *read, Point2DI *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: GetVarintValue(read,(unsigned int*)&val->x); break;// TODO(RJ):
-    case 2: GetVarintValue(read,(unsigned int*)&val->y); break;// TODO(RJ):
+  { case 1: GetSignedVarint32Value(read,&val->x); break;// TODO(RJ):
+    case 2: GetSignedVarint32Value(read,&val->y); break;// TODO(RJ):
   }
 }
 ALISTAR_PARSE_FUNCTION void
@@ -152,106 +160,30 @@ ParseImageData(xstate *read, ImageData *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: GetVarintValue(read,&val->bits_per_pixel); break;
-    case 2: ParseSize2DI(read,  &val->size);    break;
-    case 3: GetBytesValue(read, &val->bytes);  break;
+    case 2: ParseSize2DI(read,  &val->size);           break;
+    case 3: GetBytesValue(read, &val->bytes);    break;
   }
 }
-typedef struct AliFeatureLayers
-{ ImageData HeightMap;                 // uint8. Terrain height. World space units of [-200, 200] encoded into [0, 255].
-  ImageData VisibilityMap;             // uint8. 0=Hidden, 1=Fogged, 2=Visible, 3=FullHidden
-  ImageData Creep;                     // 1-bit. Zerg creep.
-  ImageData Power;                     // 1-bit. Protoss power.
-  ImageData PlayerId;                  // uint8. Participants: [1, 15] Neutral: 16
-  ImageData UnitType;                  // int32. Unique identifier for type of unit.
-  ImageData Selected;                  // 1-bit. Selected units.
-  ImageData UnitHitPoints;             // int32.
-  ImageData UnitHitPointsRatio;        // uint8. Ratio of current health to max health. [0%, 100%] encoded into [0, 255].
-  ImageData UnitEnergy;                // int32.
-  ImageData UnitEnergyRatio;           // uint8. Ratio of current energy to max energy. [0%, 100%] encoded into [0, 255].
-  ImageData UnitShields;               // int32.
-  ImageData UnitShieldsRatio;          // uint8. Ratio of current shields to max shields. [0%, 100%] encoded into [0, 255].
-  ImageData PlayerRelative;            // uint8. See "Alliance" enum in raw.proto. Range: [1, 4]
-  ImageData UnitDensityAa;             // uint8. Density of units overlapping a pixel, anti-aliased. [0.0, 16.0f] encoded into [0, 255].
-  ImageData UnitDensity;               // uint8. Count of units overlapping a pixel.
-  ImageData Effects;                   // uint8. Visuals of persistent abilities. (eg. Psistorm)
-  ImageData Hallucinations;            // 1-bit. Whether the unit here is a hallucination.
-  ImageData Cloaked;                   // 1-bit. Whether the unit here is cloaked. Hidden units will show up too, but with less details in other layers.
-  ImageData Blip;                      // 1-bit. Whether the unit here is a blip.
-  ImageData Buffs;                     // int32. One of the buffs applied to this unit. Extras are ignored.
-  ImageData BuffDuration;              // uint8. Ratio of buff remaining. [0%, 100%] encoded into [0, 255].
-  ImageData Active;                    // 1-bit. Whether the unit here is active.
-  ImageData BuildProgress;             // uint8. How far along the building is building something. [0%, 100%] encoded into [0, 255].
-  ImageData Buildable;                 // 1-bit. Whether a building can be built here.
-  ImageData Pathable;                  // 1-bit. Whether a unit can walk here.
-  ImageData Placeholder;               // 1-bit. Whether the unit here is a placeholder building to be constructed.
-} AliFeatureLayers;
-ALISTAR_PARSE_FUNCTION void
-AliParseFeatureLayers(xstate *read, AliFeatureLayers *val)
-{ ZeroMemory(val,sizeof(*val));
-  ForMessageField(read)
-  { case 1:   ParseImageData(read,&val->HeightMap);          break;
-    case 2:   ParseImageData(read,&val->VisibilityMap);      break;
-    case 3:   ParseImageData(read,&val->Creep);              break;
-    case 4:   ParseImageData(read,&val->Power);              break;
-    case 5:   ParseImageData(read,&val->PlayerId);           break;
-    case 6:   ParseImageData(read,&val->UnitType);           break;
-    case 7:   ParseImageData(read,&val->Selected);           break;
-    case 8:   ParseImageData(read,&val->UnitHitPoints);      break;
-    case 17:  ParseImageData(read,&val->UnitHitPointsRatio); break;
-    case 9:   ParseImageData(read,&val->UnitEnergy);         break;
-    case 18:  ParseImageData(read,&val->UnitEnergyRatio);    break;
-    case 10:  ParseImageData(read,&val->UnitShields);        break;
-    case 19:  ParseImageData(read,&val->UnitShieldsRatio);   break;
-    case 11:  ParseImageData(read,&val->PlayerRelative);     break;
-    case 14:  ParseImageData(read,&val->UnitDensityAa);      break;
-    case 15:  ParseImageData(read,&val->UnitDensity);        break;
-    case 20:  ParseImageData(read,&val->Effects);            break;
-    case 21:  ParseImageData(read,&val->Hallucinations);     break;
-    case 22:  ParseImageData(read,&val->Cloaked);            break;
-    case 23:  ParseImageData(read,&val->Blip);               break;
-    case 24:  ParseImageData(read,&val->Buffs);              break;
-    case 26:  ParseImageData(read,&val->BuffDuration);       break;
-    case 25:  ParseImageData(read,&val->Active);             break;
-    case 27:  ParseImageData(read,&val->BuildProgress);      break;
-    case 28:  ParseImageData(read,&val->Buildable);          break;
-    case 29:  ParseImageData(read,&val->Pathable);           break;
-    case 30:  ParseImageData(read,&val->Placeholder);        break;
-  }
-}
-typedef struct AliFeatureLayersMinimap
-{ ImageData HeightMap;
-  ImageData VisibilityMap;
-  ImageData Creep;
-  ImageData Camera;
-  ImageData PlayerId;
-  ImageData PlayerRelative;
-  ImageData Selected;
-  ImageData Alerts;
-  ImageData Buildable;
-  ImageData Pathable;
-  ImageData UnitType;
-} AliFeatureLayersMinimap;
-ALISTAR_PARSE_FUNCTION void
-AliParseFeatureLayersMinimap(xstate *read, AliFeatureLayersMinimap *val)
-{ ZeroMemory(val,sizeof(*val));
-  ForMessageField(read)
-  { case 1:  ParseImageData(read,&val->HeightMap);      break;
-    case 2:  ParseImageData(read,&val->VisibilityMap);  break;
-    case 3:  ParseImageData(read,&val->Creep);          break;
-    case 4:  ParseImageData(read,&val->Camera);         break;
-    case 5:  ParseImageData(read,&val->PlayerId);       break;
-    case 6:  ParseImageData(read,&val->PlayerRelative); break;
-    case 7:  ParseImageData(read,&val->Selected);       break;
-    case 9:  ParseImageData(read,&val->Alerts);         break;
-    case 10: ParseImageData(read,&val->Buildable);      break;
-    case 11: ParseImageData(read,&val->Pathable);       break;
-    case 8:  ParseImageData(read,&val->UnitType);       break;
-  }
-}
+
+// Note: experimenting with this sort of stuff ...
+#define ALI_TYPE_FEATURE_LAYERS
+#include "ali-typemaker.inl"
+#undef ALI_TYPE_FEATURE_LAYERS
+
+#define ALI_TYPE_FEATURE_LAYERS_MINIMAP
+#include "ali-typemaker.inl"
+#undef ALI_TYPE_FEATURE_LAYERS_MINIMAP
+
+#define ALI_TYPE_OBSERVATION_RENDER
+#include "ali-typemaker.inl"
+#undef ALI_TYPE_OBSERVATION_RENDER
+
+
 typedef struct ObservationFeatureLayer
 { AliFeatureLayers Renders;
   AliFeatureLayersMinimap MinimapRenders;
 } ObservationFeatureLayer;
+
 ALISTAR_PARSE_FUNCTION void
 AliParseObservationFeatureLayer(xstate *read, ObservationFeatureLayer *val)
 { ZeroMemory(val,sizeof(*val));
@@ -645,10 +577,9 @@ CreateDefaultInterfaceOptions()
 { xvalue req={ali_msg_type};
   AddBoolValue(&req,1,TRUE);
   AddBoolValue(&req,8,TRUE);
-  // AddValue(&req,3,AliCameraSetupValue({255,255},{128,128},8.f,FALSE,TRUE));
-  AddValue(&req,4,AliCameraSetupValueNoMinimap({512,512},8.f,FALSE,TRUE));
-
-  //AddValue(&req,4,AliDefaultCameraSetupValue());
+  // AddValue(&req,4,AliCameraSetupValueNoMinimap({512,512},8.f,FALSE,TRUE));
+  AddValue(&req,3,AliCameraSetupValue({255,255},{256,256},256.f,FALSE,TRUE));
+  AddValue(&req,4,AliCameraSetupValue({512,512},{256,256},256.f,FALSE,TRUE));
   return req;
 }
 static i32
@@ -705,8 +636,8 @@ ALISTAR_PARSE_FUNCTION void
 ParseResponseQuery(xstate *read, ResponseQuery *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: ParseResponseQueryPathing(read,sb_add(val->pathing,1)); break;
-    case 3: ParseResponseQueryBuildingPlacement(read,sb_add(val->placements,1)); break;
+  { case 1: ParseResponseQueryPathing(read,AliArrayAdd(read,val->pathing)); break;
+    case 3: ParseResponseQueryBuildingPlacement(read,AliArrayAdd(read,val->placements)); break;
   }
 }
 // Mainly for debugging reasons
@@ -725,7 +656,7 @@ ParseActionRawUnitCommand(xstate *read, ActionRawUnitCommand *val)
   { case 1: GetVarintValue(read, &val->ability_id);             break;
     case 2: ParsePoint2D(read, &val->target_world_space_pos);   break;
     case 3: GetVarint64Value(read, &val->target_unit_tag);      break;
-    case 4: GetVarint64Value(read, sb_add(val->unit_tags,1));   break;
+    case 4: GetVarint64Value(read, AliArrayAdd(read,val->unit_tags));   break;
     case 5: GetVarintValue(read, &val->queue_command);          break;
   }
 }
@@ -752,7 +683,7 @@ ALISTAR_PARSE_FUNCTION void
 ParseRequestAction(xstate *read, RequestAction *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: ParseAction(read,sb_add(val->actions,1)); break;
+  { case 1: ParseAction(read,AliArrayAdd(read,val->actions)); break;
   }
 }
 ALISTAR_PARSE_FUNCTION void
@@ -819,7 +750,7 @@ ParseStartRaw(xstate *read, StartRaw *val)
     case 3: ParseImageData(read,  &val->terrain_height);         break;
     case 4: ParseImageData(read,  &val->placement_grid);         break;
     case 5: ParseRectangleI(read, &val->playable_area);          break;
-    case 6: ParsePoint2D(read, sb_add(val->start_locations, 1)); break;
+    case 6: ParsePoint2D(read, AliArrayAdd(read,val->start_locations)); break;
   }
 }
 ALISTAR_PARSE_FUNCTION void
@@ -828,22 +759,22 @@ ParseResponseGameInfo(xstate *read, ResponseGameInfo *val)
   ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1:
-    { map=sb_add(val->maps,1);
+    { map=AliArrayAdd(read,val->maps);
       map->is_local=0;
 
       GetStringValue(read,&map->string);
     } break;
     break;
     case 2:
-    { map=sb_add(val->maps,1);
+    { map=AliArrayAdd(read,val->maps);
       map->is_local=1;
 
       GetStringValue(read,&map->string);
     } break;
     break;
-    case 3: ParsePlayerInfo(read,sb_add(val->players,1)); break;
+    case 3: ParsePlayerInfo(read,AliArrayAdd(read,val->players)); break;
     case 4: ParseStartRaw(read,&val->start_raw);          break;
-    case 6: GetStringValue(read,sb_add(val->mods,1));     break;
+    case 6: GetStringValue(read,AliArrayAdd(read,val->mods));     break;
   }
 }
 ALISTAR_PARSE_FUNCTION void
@@ -852,13 +783,13 @@ ParseResponseAvailableMaps(xstate *read, ResponseAvailableMaps *val)
   ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1:
-    { map=sb_add(val->maps,1);
+    { map=AliArrayAdd(read,val->maps);
       map->is_local=1;
 
       GetStringValue(read,&map->string);
     } break;
     case 2:
-    { map=sb_add(val->maps,1);
+    { map=AliArrayAdd(read,val->maps);
       map->is_local=0;
 
       GetStringValue(read,&map->string);
@@ -936,8 +867,8 @@ ParseUnit(xstate *read, Unit *val)
     case 1:  GetEnumValue(read,&val->display_type); break;
     case 2:  GetEnumValue(read,&val->alliance); break;
     case 6:  ParsePoint3D(read,&val->pos); break;
-    case 27: GetVarintValue(read,sb_add(val->buff_ids,1)); break;
-    case 22: ParseUnitOrder(read,sb_add(val->orders,  1)); break;
+    case 27: GetVarintValue(read,AliArrayAdd(read,val->buff_ids)); break;
+    case 22: ParseUnitOrder(read,AliArrayAdd(read,val->orders)); break;
     // case 24: PassengerUnit  * passengers;
     // case 45: RallyTarget    * rally_targets;
   }
@@ -963,28 +894,17 @@ ParseObservationRaw(xstate *read, ObservationRaw *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 3: ParseMapState(read,&val->map_state);  break;
-    case 2: ParseUnit(read,sb_add(val->units,1)); break;
+    case 2: ParseUnit(read,AliArrayAdd(read,val->units)); break;
   }
 }
-typedef struct ObservationRender
-{ ImageData Map;
-  ImageData Minimap;
-} ObservationRender;
-ALISTAR_PARSE_FUNCTION void
-AliParseObservationRender(xstate *read, ObservationRender *val)
-{ ZeroMemory(val,sizeof(*val));
-  ForMessageField(read)
-  { case 1: ParseImageData(read,&val->Map);     break;
-    case 2: ParseImageData(read,&val->Minimap); break;
-  }
-}
+
 typedef struct Observation
 { uint32_t                   GameLoop;
   PlayerCommon               PlayerCommon;
   Alert                    * Alerts;
   ObservationRaw             RawData;
   ObservationFeatureLayer    FeatureLayerData;
-  ObservationRender          RenderData;
+  AliObservationRender       RenderData;
 } Observation;
 ALISTAR_PARSE_FUNCTION void
 ParseObservation(xstate *read, Observation *val)
@@ -992,7 +912,7 @@ ParseObservation(xstate *read, Observation *val)
   ForMessageField(read)
   { case 9:  GetVarintValue(read,&val->GameLoop);                          break;
     case 1:  ParsePlayerCommon(read,&val->PlayerCommon);                   break;
-    case 10: GetEnumValue(read,sb_add(val->Alerts,1));                     break;
+    case 10: GetEnumValue(read,AliArrayAdd(read,val->Alerts));                     break;
     case 5:  ParseObservationRaw(read,&val->RawData);                      break;
     case 6:  AliParseObservationFeatureLayer(read,&val->FeatureLayerData); break;
     case 7:  AliParseObservationRender(read,&val->RenderData);             break;
@@ -1009,11 +929,11 @@ ALISTAR_PARSE_FUNCTION void
 ParseResponseObservation(xstate *read, ResponseObservation *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: ParseAction(read,sb_add(val->actions,1));             break;
-    case 2: ParseErrorAction(read,sb_add(val->error_actions,1));  break;
+  { case 1: ParseAction(read,AliArrayAdd(read,val->actions));             break;
+    case 2: ParseErrorAction(read,AliArrayAdd(read,val->error_actions));  break;
     case 3: ParseObservation(read,&val->observation);             break;
-    case 4: ParsePlayerResult(read,sb_add(val->player_results,1));break;
-    case 5: ParseChatReceived(read,sb_add(val->chats,1));         break;
+    case 4: ParsePlayerResult(read,AliArrayAdd(read,val->player_results));break;
+    case 5: ParseChatReceived(read,AliArrayAdd(read,val->chats));         break;
     default:
     { TRACE_W("unknown field: %i", GetTag(read));
     } break;
@@ -1026,7 +946,7 @@ ParseResponseAction(xstate *read, ResponseAction *val)
   { case 1:
     {
       ActionResult *result;
-      result=sb_add(val->results,1);
+      result=AliArrayAdd(read,val->results);
 
       GetEnumValue(read,result);
 
@@ -1037,6 +957,7 @@ ParseResponseAction(xstate *read, ResponseAction *val)
 }
 typedef struct Response
 {
+  Response *next;
 union
 { ResponseGameInfo      GameInfo;
   ResponseCreateGame    CreateGame;
@@ -1046,104 +967,141 @@ union
   ResponseAction        Action;
   ResponseQuery         Query;
 };
-  int Status;
-  int Type;
-  unsigned int Id;
-  char *Error;
-} Response;
+  int               Status;
+  int               Type;
+  unsigned int      Id;
+  char           *  Error;
+} Response, ali_response;
 ALISTAR_PARSE_FUNCTION void
-ParseResponse(Response *info, size_t size, const void *data)
+ParseResponse(xstate *read, Response *info)
 { ZeroMemory(info,sizeof(*info));
-  xstate read={};
-  Apportion(&read,size,data);
-
-  ForMessageField(&read)
-  { case 99: GetEnumValue(&read,&info->Status);  break;
-    case 98: GetStringValue(&read,&info->Error); break;
-    case 97: GetVarintValue(&read,&info->Id);    break;
+  ForMessageField(read)
+  { case 99: GetEnumValue(read,&info->Status);  break;
+    case 98: GetStringValue(read,&info->Error); break;
+    case 97: GetVarintValue(read,&info->Id);    break;
     case RESPONSE_TAG_CREATE_GAME:
-    { ParseResponseCreateGame(&read,&info->CreateGame);
+    { ParseResponseCreateGame(read,&info->CreateGame);
       info->Type=RESPONSE_TAG_CREATE_GAME;
     } break;
     case RESPONSE_TAG_JOIN_GAME:
-    { ParseResponseJoinGame(&read,&info->JoinGame);
+    { ParseResponseJoinGame(read,&info->JoinGame);
       info->Type=RESPONSE_TAG_JOIN_GAME;
     } break;
     case RESPONSE_TAG_GAME_INFO:
-    { ParseResponseGameInfo(&read,&info->GameInfo);
+    { ParseResponseGameInfo(read,&info->GameInfo);
       info->Type=RESPONSE_TAG_GAME_INFO;
     } break;
     case RESPONSE_TAG_AVAILABLE_MAPS:
-    { ParseResponseAvailableMaps(&read,&info->AvailableMaps);
+    { ParseResponseAvailableMaps(read,&info->AvailableMaps);
       info->Type=RESPONSE_TAG_AVAILABLE_MAPS;
     } break;
     case RESPONSE_TAG_OBSERVATION:
-    { ParseResponseObservation(&read,&info->Observation);
+    { ParseResponseObservation(read,&info->Observation);
       info->Type=RESPONSE_TAG_OBSERVATION;
     } break;
     case RESPONSE_TAG_ACTION:
-    { ParseResponseAction(&read,&info->Action);
+    { ParseResponseAction(read,&info->Action);
       info->Type=RESPONSE_TAG_ACTION;
     } break;
     case RESPONSE_TAG_QUERY:
-    { ParseResponseQuery(&read,&info->Query);
+    { ParseResponseQuery(read,&info->Query);
       info->Type=RESPONSE_TAG_QUERY;
     } break;
     default:
-    { TRACE_W("unknown response: %i", GetTag(&read));
+    { TRACE_W("unknown response: %i", GetTag(read));
     } break;
   }
 }
 
+#include "ali-thread.c"
 
-typedef struct AlistarUnitArray
+
+// Todo: please forgive me
+static const char *AliFieldStrings_Game[]=
 {
-  int32_t   CountMax;
-  int32_t   CountMin;
-  Unit    * Array;
-  void    * Mutex;
-} AlistarUnitArray;
-typedef struct AlistarQueue
-{ int64_t   CountMax;
-  int64_t   CountMin;
-  Response  *Array;
-  void      *Mutex;
-  void      *Event;
-} AlistarQueue;
+#define ALI_TYPE_OBSERVATION_RENDER
+#define ALI_TYPEFIELD(TYPE,METHOD,TAG,NAME) ALISTAR_TO_STRING(NAME),
+#include "ali-types.inl"
+#undef ALI_TYPE_OBSERVATION_RENDER
+#define ALI_TYPE_FEATURE_LAYERS
+#define ALI_TYPEFIELD(TYPE,METHOD,TAG,NAME) ALISTAR_TO_STRING(NAME),
+#include "ali-types.inl"
+#undef ALI_TYPE_FEATURE_LAYERS
+};
+
+
 typedef struct AlistarContext
 {
-  ZenSystemProcess  proc;
-  mg_connection   * conn;
-  const char      * conn_addr;
-  int32_t           conn_port;
-  AlistarQueue      conn_queue;
-  Response          last_response;
-  int32_t           requested_obs;
-  int32_t           ready_for_obs;
+  ZenSystemProcess    proc;
+  mg_connection     * conn;
+  const char        * conn_addr;
+  int32_t             conn_port;
+
+  ali_thread          conn_queue;
+
+  ali_thread_message  tick_message;
+  int32_t             tick_ready;
+
+  int32_t             requested_obs;
+  int32_t             ready_for_obs;
 
 
   struct
-  { int32_t loop;
-
+  {
+    int32_t loop;
+#if 0
     int32_t Supply;
-
     AlistarUnitArray CommandCenters;
     int32_t WorkersQueued;
-
-    AlistarUnitArray SupplyDepots;
-    int32_t SupplyDepotsQueued;
-
+    AlistarUnitArray  SupplyDepots;
+    int32_t           SupplyDepotsQueued;
     AlistarUnitArray Workers;
     AlistarUnitArray WorkersIdling;
     AlistarUnitArray WorkersHarvesting;
     AlistarUnitArray WorkersBuilding;
     AlistarUnitArray WorkersRepairing;
-
     AlistarUnitArray Army;
-
-
     int Minerals;
     int Vespene;
+#endif
+
+
+
+  // Todo: please forgive me
+  union
+  { ZenTexture *Textures[0x20];
+    struct
+  { ZenTexture *TextureMap;                // 0
+    ZenTexture *TextureMinimap;            // 1
+    ZenTexture *TextureHeightMap;          // 2
+    ZenTexture *TextureVisibilityMap;      // 3
+    ZenTexture *TextureCreep;              // 4
+    ZenTexture *TexturePower;              // 5
+    ZenTexture *TexturePlayerId;           // 6
+    ZenTexture *TextureUnitType;           // 7
+    ZenTexture *TextureSelected;           // 8
+    ZenTexture *TextureUnitHitPoints;      // 9
+    ZenTexture *TextureUnitHitPointsRatio; // 10
+    ZenTexture *TextureUnitEnergy;         // 11
+    ZenTexture *TextureUnitEnergyRatio;    // 12
+    ZenTexture *TextureUnitShields;        // 13
+    ZenTexture *TextureUnitShieldsRatio;   // 14
+    ZenTexture *TexturePlayerRelative;     // 15
+    ZenTexture *TextureUnitDensityAA;      // 16
+    ZenTexture *TextureUnitDensity;        // 17
+    ZenTexture *TextureEffects;            // 18
+    ZenTexture *TextureHallucinations;     // 19
+    ZenTexture *TextureCloaked;            // 20
+    ZenTexture *TextureBlip;               // 21
+    ZenTexture *TextureBuffs;              // 22
+    ZenTexture *TextureBuffDuration;       // 23
+    ZenTexture *TextureActive;             // 24
+    ZenTexture *TextureBuildProgress;      // 25
+    ZenTexture *TextureBuildable;          // 26
+    ZenTexture *TexturePathable;           // 27
+    ZenTexture *TexturePlaceholder;        // 28
+  };
+  };
 
   } Game;
 
@@ -1206,70 +1164,6 @@ AlistarQueryBuildingPlacement(AlistarContext *ctx, int32_t ability_id, Point2D l
   AddValue(&req_query,3,req_query_building_placement);
   return AlistarSendPayload(ctx,14,&req_query);
 }
-static int
-AlistarTryBuildStructure(
-  AlistarContext *ctx, uint64_t unit_tag, int32_t ability_id, Point2D location)
-{
-
-}
-#if 0
-static int
-AlistarTryBuildStructure(
-  AlistarContext *ctx, uint64_t unit_tag, int32_t ability_id, Point2D world_location)
-{
-    const ObservationInterface* observation = Observation();
-    Units workers = observation->GetUnits(Unit::Alliance::Self, IsUnit(unit_type));
-
-    //if we have no workers Don't build
-    if (workers.empty()) {
-        return false;
-    }
-
-    // Check to see if there is already a worker heading out to build it
-    for (const auto& worker : workers) {
-        for (const auto& order : worker->orders) {
-            if (order.ability_id == ability_type_for_structure) {
-                return false;
-            }
-        }
-    }
-
-    // If no worker is already building one, get a random worker to build one
-    const Unit* unit = GetRandomEntry(workers);
-
-    // Check to see if unit can make it there
-    if (Query()->PathingDistance(unit, location) < 0.1f) {
-        return false;
-    }
-    if (!isExpansion) {
-        for (const auto& expansion : expansions_) {
-            if (Distance2D(location, Point2D(expansion.x, expansion.y)) < 7) {
-                return false;
-            }
-        }
-    }
-    // Check to see if unit can build there
-    if (Query()->Placement(ability_type_for_structure, location)) {
-        Actions()->UnitCommand(unit, ability_type_for_structure, location);
-        return true;
-    }
-    return false;
-
-}
-static int
-AlistarTryBuildDepot(AlistarContext *ctx, uint64_t unit_tag)
-{
-  // Try and build a pylon. Find a random Probe and give it the order.
-  float rx = GetRandomScalar();
-  float ry = GetRandomScalar();
-  Point2D build_location = Point2D(staging_location_.x + rx * 15, staging_location_.y + ry * 15);
-
-  AlistarTryBuildStructure(ABILITY_ID::BUILD_PYLON, UNIT_TYPEID::PROTOSS_PROBE, build_location)
-
-  return ;
-
-}
-#endif
 static int
 AlistarSendChat(AlistarContext *ctx, int32_t channel, const char *message)
 {

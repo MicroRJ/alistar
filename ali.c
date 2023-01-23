@@ -2,19 +2,6 @@
 #ifndef XVAL_C
 #define XVAL_C
 
-#ifndef ali_malloc
-# define ali_malloc(size) malloc(size)
-#endif
-#ifndef ali_realloc
-# define ali_realloc(memory,size) realloc(memory,size)
-#endif
-#ifndef ali_calloc
-# define ali_calloc(size,count) calloc(size,count)
-#endif
-#ifndef ali_free
-# define ali_free(memory) free(memory)
-#endif
-
 // Todo: support for signed integer types
 typedef enum xtype
 { ali_typeless = 0,
@@ -58,146 +45,17 @@ typedef struct xvalue
   unsigned int   len;
   void          *mem;
 } xvalue;
-// TODO(RJ): PADDING ...
-typedef struct zslabel
-{ unsigned int len;
-  char         mem[4];
-} zslabel;
-typedef struct zsblock
-{ zsblock *nex;
-  char     mem[8];
-} zsblock;
-typedef struct zsarena
-{ unsigned int rem;
-  unsigned int len;
-  zsblock     *lis;
-} zsarena;
+
 typedef struct xstate
-{ xstack   stc_[0x10];
-  xstack  *stc;
-  zsarena  str;
-  int      lvl;
-  unsigned cue:1;
+{ xstack    stc_[0x10];
+  xstack  * stc;
+  int       lvl;
+  unsigned  cue:1;
+
+  ali_arena arena;
 } xstate;
 
-static unsigned int
-zslen(const char *str)
-{
-  return str? ((unsigned int *)str)[-1] :0;
-}
 
-static char *
-zsmov(void *mem,size_t len,const void *str)
-{ zslabel *lbl;
-  lbl=(zslabel *)mem;
-
-  lbl->len=(uint32_t)len;// TODO(RJ):
-
-  memmove(lbl->mem,str,len);
-  lbl->mem[len]=0;
-
-  return lbl->mem;
-}
-
-static void
-zsdel(zsarena *mem)
-{
-  zsblock *itr,*nex;
-  for(itr=mem->lis;itr;itr=nex)
-  { nex=itr->nex;
-    mg_free(itr);
-  }
-}
-
-static char *
-zsnew(zsarena *mem, size_t len, const void *str)
-{
-#ifndef STRING_BLOCK_SIZE_MIN
-# define STRING_BLOCK_SIZE_MIN 0x200
-#endif
-#ifndef STRING_BLOCK_SIZE_MAX
-# define STRING_BLOCK_SIZE_MAX 0xffff
-#endif
-
-  size_t enc;
-  enc=len+sizeof(zslabel);
-
-  if (enc>mem->rem)
-  { // Note: there's not enough space in the first buffer. The first buffer has
-    // the largest amount of free space, if any. And ideally, it should be the only
-    // buffer with free space ...
-    unsigned int sze;
-    sze=mem->len;
-    sze=STRING_BLOCK_SIZE_MIN<<(sze>>1);
-    if (sze>STRING_BLOCK_SIZE_MAX)
-    { ++mem->len;
-    }
-
-    zsblock *blc;
-    if (enc>sze)
-    { // Note: the length of the string is larger than the buffer size ...
-      blc=(zsblock *)mg_malloc(sizeof(*blc)-sizeof(blc->mem)+enc);
-
-
-      if (mem->lis)
-      { // Since this block is full already, put it after the first one, if there is a first one,
-        // otherwise, this becomes the first block in the else case ...
-        blc->nex=mem->lis->nex;
-        mem->lis->nex=blc;
-      } else
-      {
-        blc->nex=0;
-        mem->rem=0;
-        mem->lis=blc;
-      }
-
-      char *res;
-      res=zsmov(blc->mem,len,str);
-
-      return res;
-    } else
-    { // Note: We allocated a buffer that was bigger than the requested string
-      // and thus we have some remaining space ...
-      // Note: The remaining field is set to the size, this is because the length of the
-      // payload will be subtracted from it afterwards ...
-      blc=(zsblock *)mg_malloc(sizeof(*blc)-sizeof(blc->mem)+sze);
-
-      size_t rem;
-      rem=sze-enc;
-
-      if(rem>mem->rem)
-      { // Note: this buffer has more free space than the previous buffer, set it as first ...
-        blc->nex=mem->lis;
-        mem->lis=blc;
-      } else
-      { // Note: this buffer isn't as big as the first one but we won't check
-        // the subsequent buffers since we're going for speed, and on the
-        // following allocation ewe only check the first buffer anyways ...
-        //
-        blc->nex=mem->lis->nex;
-        mem->lis->nex=blc;
-      }
-
-      mem->rem=(uint32_t)rem; // TODO(RJ):
-
-      // Note: we use the higher addresses of the buffer first ...
-      char *res;
-      res=blc->mem+rem;
-      res=zsmov(res,len,str);
-
-      return res;
-    }
-  } else
-  {
-    // Note: we use the higher addresses of the buffer first ...
-    char *res;
-    res=mem->lis->mem+mem->rem-enc;
-    mem->rem-=(uint32_t)enc; // TODO(RJ)
-
-    res=zsmov(res,len,str);
-    return res;
-  }
-}
 
 static int
 ReturnDecodeError(const wchar_t *msg)
@@ -730,6 +588,13 @@ GetVarint32Value(xstate *read, unsigned int *val32)
   return res;
 }
 
+// Todo: IMPLEMENT
+static int
+GetSignedVarint32Value(xstate *read, int *val32)
+{
+  return GetVarint32Value(read,(unsigned int *) val32);
+}
+
 static int
 GetVarintValue(xstate *read, unsigned int *val)
 {
@@ -806,7 +671,38 @@ GetStringValue(xstate *read, char **val)
   void *str;
   str=AdvanceCursor(block,len);
 
-  *val=zsnew(&read->str,len,str);
+  char *mem;
+  mem=ali_arena_sadd_(&read->arena,len,len+1);
+
+  memcpy(mem,str,len);
+  mem[len]=0;
+
+  *val=mem;
+
+  return 1;
+}
+
+static int
+GetStringValueNoCopy(xstate *read, char **val)
+{
+  xstack *block;
+  block=GetStack(read);
+
+  xlabel label;
+  label=InternalConsumeLabel(read);
+
+  if((label.bit!=ali_len_typeless) && (label.bit!=ali_str_type))
+  {
+    return ReturnDecodeError(L"invalid call, tag is too different from type");
+  }
+
+  size_t len;
+  len=GobbleVarint(block);
+
+  unsigned char *str;
+  str=AdvanceCursor(block,len);
+
+  *val=(char*)str;
 
   return 1;
 }
@@ -831,7 +727,37 @@ GetBytesValue(xstate *read, unsigned char **val)
   void *str;
   str=AdvanceCursor(block,len);
 
-  *val=(unsigned char*)zsnew(&read->str,len,str);
+
+  char *mem;
+  mem=ali_arena_sadd_(&read->arena,len,len);
+  memcpy(mem,str,len);
+
+  *val=(uint8_t*)mem;
+
+  return 1;
+}
+
+static int
+GetBytesValueNoCopy(xstate *read, unsigned char **val)
+{
+  xstack *block;
+  block=GetStack(read);
+
+  xlabel label;
+  label=InternalConsumeLabel(read);
+
+  if((label.bit!=ali_len_typeless) && (label.bit!=ali_str_type))
+  {
+    return ReturnDecodeError(L"invalid call, tag is too different from type");
+  }
+
+  size_t len;
+  len=GobbleVarint(block);
+
+  unsigned char *str;
+  str=AdvanceCursor(block,len);
+
+  *val=str;
   return 1;
 }
 
@@ -920,7 +846,8 @@ GetTag(xstate *read)
 
 static void
 Apportion(xstate *read, size_t len, const void *cur)
-{ InternalPushStack(read,len,(unsigned char *)cur);
+{ // ali_rst_(read);
+  InternalPushStack(read,len,(unsigned char *)cur);
 }
 
 

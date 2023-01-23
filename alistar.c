@@ -1,3 +1,4 @@
+// Copyright(C) 2022-2023 Dayan Rodriguez, All rights reserved.
 #ifndef ALISTAR_GLUE
 #define ALISTAR_GLUE
 
@@ -12,188 +13,13 @@
 #define ali_realloc(memory,size) mg_realloc(memory,size)
 #define ali_calloc(size,count) mg_calloc(size,count)
 #define ali_free(memory) mg_free(memory)
+
+#include "stretchy_buffer.h"
+#include "ali-allocator.c"
+#include "ali-process.c"
+#include "ali.c"
 #include "alistar.h"
-
-static int
-BitsToBytes(unsigned char *bytes, int bits)
-{ bytes[0]=0xff*(bits&0x80);bytes[4]=0xff*(bits&0x08);
-  bytes[1]=0xff*(bits&0x40);bytes[5]=0xff*(bits&0x04);
-  bytes[2]=0xff*(bits&0x20);bytes[6]=0xff*(bits&0x02);
-  bytes[3]=0xff*(bits&0x10);bytes[7]=0xff*(bits&0x01);
-  return 8;
-}
-
-// TODO(RJ): REMOVE FROM HERE
-// TODO(RJ): THIS IS TEMPORARY
-ZEN_FUNCTION ZenTexture // COMPILER(RJ): FORCEINLINE
-ZenCoreCreateSoftTextureForThisFrame(ZenCore *Core, i32 Format, i32 DimenX, i32 DimenY)
-{ void *Memory = ZenCoreFrameAlloc(Core, ZenComputeTrimmedSizeForTexture(Format, DimenX, DimenY));
-  ZenTexture Texture = ZenUnboundTexture(DE_CPU_ACCESS, Format, DimenX, DimenY, Memory);
-  // NOTE(RJ): ALLOCATIONS ARE ZEROED ALREADY, BUT I KNOW THAT'LL CHANGE!
-  ZenZeroTextureMemory(&Texture);
-  return Texture;
-}
-
-static ZenTexture
-AliConvertTexture(ZenCore *Core, ImageData data)
-{
-  ZenTexture tex={};
-  if(data.bits_per_pixel==1)
-  { tex=ZenCoreCreateSoftTextureForThisFrame(Core,PIXEL_FORMAT_RGB8,data.size.x,data.size.y);
-
-    unsigned char *loc,*cur,*end;
-    loc=tex.Single;
-    end=data.bytes+((data.size.x*data.size.y)>>3);
-    for(cur=data.bytes;cur<end;++cur)
-    { loc+=BitsToBytes(loc,*cur);
-    }
-  } else
-  if(data.bits_per_pixel==8)
-  { tex=ZenUnboundTexture(DE_GPU_ACCESS,PIXEL_FORMAT_RGB8,data.size.x,data.size.y,data.bytes);
-  } else
-  if(data.bits_per_pixel==24)
-  { tex=ZenCoreCreateSoftTextureForThisFrame(Core,PIXEL_FORMAT_RGBA8888,data.size.x,data.size.y);
-
-    unsigned char *loc,*cur,*end;
-    loc=tex.Single;
-
-    end=data.bytes+(data.size.x*data.size.y)*3;
-
-    for(cur=data.bytes;cur<end;cur+=3,loc+=4)
-    { loc[0]=cur[2];
-      loc[1]=cur[1];
-      loc[2]=cur[0];
-      loc[3]=0xff;
-    }
-  }
-
-  return tex;
-}
-
-static ZenTexture *
-CopyImageDataToTexture(ZenCore *Core, ZenTexture *Texture, ImageData data)
-{
-
-  if((data.size.x==0)||(data.size.y==0)||(data.bytes==0)||(data.bits_per_pixel==0)) return 0;
-
-  ZenTexture tex;
-  tex=AliConvertTexture(Core,data);
-
-  if(!Texture)
-  { Texture=ZenCoreCreateTexture(Core,DE_GPU_READ|DE_CPU_WRITE,tex.Format,tex.DimenX,tex.DimenY,tex.Memory);
-  } else
-  { if(ZenCoreBorrowTextureChronicle(Core, Texture, ZEN_WRITE))
-    { ZenCopyTexture(Texture, &tex);
-      ZenCoreReturnTextureChronicle(Core, Texture);
-    }
-  }
-
-  return Texture;
-}
-
-#define AliDequeueEventOfTypeAndNotifyAll(Queue,Value,Type) AliDequeueEventOfTypeAndNotifyAll_(ZenGenerateCallerInfo(),Queue,Value,Type)
-
-static int
-AliDequeueEventOfTypeAndNotifyAll_(ZenCaller Caller, AlistarQueue *Queue, Response *Value, int Type)
-{ // TRACE_I("%s", ZenCallerW(Caller));
-  int Success;
-  Success=FALSE;
-  if(ZenAcquireNativeMutex(Queue->Mutex))
-  { if(Queue->CountMin)
-    { Response *This,*Last;
-      This=Queue->Array;
-      Last=Queue->Array+Queue->CountMin-1;
-      for(;This<=Last;++This)
-      { if(This->Type==Type)
-        { *Value=*This;
-          if(This!=Last)
-          { *This=*Last;
-          }
-          Queue->CountMin=Queue->CountMin-1;
-          Success=TRUE;
-          break;
-        }
-      }
-    } else
-    {
-      // Note: keep the event signaled until you don't have any items?
-      ZenResetNativeEvent(Queue->Event);
-    }
-    ZenReleaseNativeMutexEnsured(Queue->Mutex);
-  }
-  return Success;
-}
-
-static int
-AliDequeueEventAndNotifyAll_(ZenCaller Caller, AlistarQueue *Queue, Response *Value)
-{ // TRACE_I("%s", ZenCallerW(Caller));
-
-  int Success;
-  Success=FALSE;
-  if(ZenAcquireNativeMutex(Queue->Mutex))
-  { if(Queue->CountMin)
-    { Queue->CountMin --;
-      Response *Read;
-      Read=Queue->Array + Queue->CountMin;
-      *Value=*Read;
-      Success=TRUE;
-    } else
-    {
-      // Note: keep the event signaled until you don't have any items?
-      ZenResetNativeEvent(Queue->Event);
-    }
-    ZenReleaseNativeMutexEnsured(Queue->Mutex);
-  }
-  return Success;
-}
-
-#define AliQueueEventAndNotifyAll(Queue,Value) AliQueueEventAndNotifyAll_(ZenGenerateCallerInfo(),Queue,Value)
-
-static int
-AliQueueEventAndNotifyAll_(ZenCaller Caller, AlistarQueue *Queue, Response *Value)
-{ // TRACE_I("%s", ZenCallerW(Caller));
-
-  if(ZenAcquireNativeMutex(Queue->Mutex))
-  {
-    if(Queue->CountMin<Queue->CountMax)
-    { Response *Write;
-      Write=Queue->Array+Queue->CountMin++;
-      *Write=*Value;
-    } else
-    {
-      TRACE_E("Queue Filled Already");
-    }
-
-    ZenReleaseNativeMutexEnsured(Queue->Mutex);
-    ZenProduceNativeEvent(Queue->Event);
-    return 1;
-  }
-  return 0;
-}
-
-#if 0
-#define AwaitResponseForever(Queue,Value) AwaitResponseForever_(ZenGenerateCallerInfo(),Queue,Value)
-static int
-AwaitResponseForever_(ZenCaller Caller, AlistarQueue *Queue, Response *Value)
-{ while(!AliDequeueEventAndNotifyAll_(Caller,Queue,Value))
-  { ZenConsumeNativeEvent(Queue->Event);
-  }
-  return 1;
-}
-#endif
-
-#define AwaitResponseOfType(Queue,Value,Type) AwaitResponseOfType_(ZenGenerateCallerInfo(),Queue,Value,Type)
-
-static int
-AwaitResponseOfType_(ZenCaller Caller, AlistarQueue *Queue, Response *Value, int Type)
-{
-  if(!AliDequeueEventOfTypeAndNotifyAll_(Caller,Queue,Value,Type))
-  { ZenConsumeNativeEvent(Queue->Event);
-    return AliDequeueEventOfTypeAndNotifyAll_(Caller,Queue,Value,Type);
-  }
-
-  return 1;
-}
+#include "ali-zen.c"
 
 ALISTAR_PARSE_FUNCTION void
 ParseRequest(xstate *read, Request *val);
@@ -226,34 +52,12 @@ AlistarSendPayload(AlistarContext *ctx, int tag, xvalue *pay)
 static int
 AlistarCreateContext(AlistarContext *ctx)
 { ZeroMemory(ctx,sizeof(*ctx));
+  ali_thread_init(&ctx->conn_queue);
+
 #if 0
-  uint64_t test_value, test_compare;
-  test_value=4346871809;
-  xvalue test={xval_t};
-  AddVarint64Value(&test, 1, test_value);
-  xblock seri;
-  seri=SerializeValue(&test);
-  xstate read={};
-  Apportion(&read,seri.len,seri.mem);
-  ForMessageField(&read)
-  { case 1: GetVarint64Value(&read, &test_compare); break;
-  }
-  Assert(test_value==test_compare);
-#endif
-
-  // TODO(RJ):
-  AlistarQueue que;
-  que.Mutex=ZenCreateNativeMutex(FALSE,NULL);
-  que.Event=ZenCreateNativeEvent(FALSE,FALSE,NULL);
-  que.CountMax=0x1000;
-  que.CountMin=0;
-  que.Array=(Response*)mg_malloc(sizeof(*que.Array)*que.CountMax);
-  ctx->conn_queue=que;
-
   unsigned int file_size;
   void *file_data;
   file_data=LoadFileData(&file_size,"last_response.txt");
-
   if(file_data)
   {
     Response res;
@@ -263,41 +67,41 @@ AlistarCreateContext(AlistarContext *ctx)
     tex=AliConvertTexture(&Zen,res.Observation.observation.RenderData.Map);
 
     ZenWriteTextureToFile(&tex, "last_map.png");
-
   }
+#endif
 
   return 1;
 }
 
-static ZenSystemProcess
-LaunchStarcraftProcess(const char *inst, int arch64, const char *addr, int port);
-
 static int
 AlistarOnSocketDataReceived(mg_connection* conn, int flags, char *data, size_t size, void *user)
-{
+{ AlistarContext *ctx;
+  ctx=(AlistarContext*)user;
 
+  // Todo:
   WriteFileData((unsigned int)size,data,"last_response.txt");
 
+  xstate read={};
+  Apportion(&read,size,data);
 
+  Response *response;
+  response=ali_thread_allocate_response(&ctx->conn_queue);
 
-  AlistarContext *ctx;
-  ctx=(AlistarContext*)user;
-  ctx->last_response.Type=RESPONSE_TAG_CONNECTION_ENDED;
+  ParseResponse(&read,response);
+  ali_thread_write_message(&ctx->conn_queue,response->Type,read.arena,response);
 
-  ParseResponse(&ctx->last_response,size,data);
-
-  AliQueueEventAndNotifyAll(&ctx->conn_queue,&ctx->last_response);
   return 1;
 }
 
 static void
 AlistarOnSocketConnectionClosed(const mg_connection* conn, void *user)
-{
-  AlistarContext *ctx;
+{ AlistarContext *ctx;
   ctx=(AlistarContext*)user;
-  ctx->last_response.Type=RESPONSE_TAG_CONNECTION_ENDED;
 
-  AliQueueEventAndNotifyAll(&ctx->conn_queue,&ctx->last_response);
+  Response *response;
+  response=ali_thread_allocate_response(&ctx->conn_queue);
+
+  ali_thread_write_message(&ctx->conn_queue,RESPONSE_TAG_CONNECTION_ENDED,{},response);
 }
 
 static void
@@ -336,18 +140,19 @@ AlistarEstablishConnection(AlistarContext *ctx, int is_realtime, int port)
       "/sc2api",NULL,AlistarOnSocketDataReceived,AlistarOnSocketConnectionClosed,ctx);
   }
 
-  Response response;
+  ali_thread_message message;
   RequestAvailableMaps(ctx);
-  if(AwaitResponseOfType(&ctx->conn_queue,&response,RESPONSE_TAG_AVAILABLE_MAPS))
+
+  if(ali_thread_await_message(&ctx->conn_queue,RESPONSE_TAG_AVAILABLE_MAPS,TRUE,&message))
   { RequestCreateGame(ctx);
 
-    if(AwaitResponseOfType(&ctx->conn_queue,&response,RESPONSE_TAG_CREATE_GAME))
+    if(ali_thread_await_message(&ctx->conn_queue,RESPONSE_TAG_CREATE_GAME,TRUE,&message))
     { RequestJoinGameAsParticipant(ctx,TERRAN,"RoyJacobs");
 
-      if(AwaitResponseOfType(&ctx->conn_queue,&response,RESPONSE_TAG_JOIN_GAME))
+      if(ali_thread_await_message(&ctx->conn_queue,RESPONSE_TAG_JOIN_GAME,TRUE,&message))
       { RequestGameInfo(ctx);
 
-        if(AwaitResponseOfType(&ctx->conn_queue,&response,RESPONSE_TAG_GAME_INFO))
+        if(ali_thread_await_message(&ctx->conn_queue,RESPONSE_TAG_GAME_INFO,TRUE,&message))
         {
           ctx->ready_for_obs=1;
         }
@@ -358,29 +163,6 @@ AlistarEstablishConnection(AlistarContext *ctx, int is_realtime, int port)
   return ctx->conn!=0;
 }
 
-static unsigned int
-UnitArrayCount(AlistarUnitArray *Array)
-{
-  return sb_count(Array->Array);
-}
-
-static void
-UnitArrayFree(AlistarUnitArray *Array)
-{
-  sb_free(Array->Array);
-  ZeroMemory(Array,sizeof(*Array));
-}
-
-static Unit *
-UnitArrayAdd(AlistarUnitArray *Array)
-{
-  Unit *res;
-  res=sb_add(Array->Array,1);
-  Array->CountMin++;
-
-  return res;
-}
-
 static int
 AlistarTick(AlistarContext *ctx)
 {
@@ -389,11 +171,58 @@ AlistarTick(AlistarContext *ctx)
     RequestObservation(ctx,TRUE,ctx->Game.loop);
   }
 
-  Response response;
-
   // Todo: handle all events in the queue ...
-  if(AliDequeueEventOfTypeAndNotifyAll(&ctx->conn_queue,&response,RESPONSE_TAG_OBSERVATION))
+  ali_thread_message message;
+  if(ali_thread_read_message(&ctx->conn_queue,RESPONSE_TAG_OBSERVATION,TRUE,&message))
   {
+    ctx->requested_obs=0;
+
+    // Note: check if we have at least one message cached ...
+    if(ctx->tick_ready) ali_thread_release_message(&ctx->tick_message);
+
+    ctx->tick_message=message;
+
+    ctx->tick_ready=1;
+
+
+    ctx->Game.TextureMap=CopyImageDataToTexture(&Zen,ctx->Game.TextureMap,
+      message.response->Observation.observation.RenderData.Map);
+    ctx->Game.TextureMinimap=CopyImageDataToTexture(&Zen,ctx->Game.TextureMinimap,
+      message.response->Observation.observation.RenderData.Minimap);
+
+
+    AliFeatureLayers Renders;
+    Renders=message.response->Observation.observation.FeatureLayerData.Renders;
+
+    ctx->Game.TextureHeightMap=CopyImageDataToTexture(&Zen,ctx->Game.TextureHeightMap, Renders.HeightMap);
+    ctx->Game.TextureVisibilityMap=CopyImageDataToTexture(&Zen,ctx->Game.TextureVisibilityMap, Renders.VisibilityMap);
+    // ctx->Game.TextureCreep=CopyImageDataToTexture(&Zen,ctx->Game.TextureCreep, Renders.Creep);
+    // ctx->Game.TexturePower=CopyImageDataToTexture(&Zen,ctx->Game.TexturePower, Renders.Power);
+    // ctx->Game.TexturePlayerId=CopyImageDataToTexture(&Zen,ctx->Game.TexturePlayerId, Renders.PlayerId);
+    // ctx->Game.TextureUnitType=CopyImageDataToTexture(&Zen,ctx->Game.TextureUnitType, Renders.UnitType);
+    // ctx->Game.TextureSelected=CopyImageDataToTexture(&Zen,ctx->Game.TextureSelected, Renders.Selected);
+    ctx->Game.TextureUnitHitPoints=CopyImageDataToTexture(&Zen,ctx->Game.TextureUnitHitPoints, Renders.UnitHitPoints);
+    // ctx->Game.TextureUnitHitPointsRatio=CopyImageDataToTexture(&Zen,ctx->Game.TextureUnitHitPointsRatio, Renders.UnitHitPointsRatio);
+    // ctx->Game.TextureUnitEnergy=CopyImageDataToTexture(&Zen,ctx->Game.TextureUnitEnergy, Renders.UnitEnergy);
+    // ctx->Game.TextureUnitEnergyRatio=CopyImageDataToTexture(&Zen,ctx->Game.TextureUnitEnergyRatio, Renders.UnitEnergyRatio);
+    // ctx->Game.TextureUnitShields=CopyImageDataToTexture(&Zen,ctx->Game.TextureUnitShields, Renders.UnitShields);
+    // ctx->Game.TextureUnitShieldsRatio=CopyImageDataToTexture(&Zen,ctx->Game.TextureUnitShieldsRatio, Renders.UnitShieldsRatio);
+    // ctx->Game.TexturePlayerRelative=CopyImageDataToTexture(&Zen,ctx->Game.TexturePlayerRelative, Renders.PlayerRelative);
+    ctx->Game.TextureUnitDensityAA=CopyImageDataToTexture(&Zen,ctx->Game.TextureUnitDensityAA, Renders.UnitDensityAA);
+    // ctx->Game.TextureUnitDensity=CopyImageDataToTexture(&Zen,ctx->Game.TextureUnitDensity, Renders.UnitDensity);
+    // ctx->Game.TextureEffects=CopyImageDataToTexture(&Zen,ctx->Game.TextureEffects, Renders.Effects);
+    // ctx->Game.TextureHallucinations=CopyImageDataToTexture(&Zen,ctx->Game.TextureHallucinations, Renders.Hallucinations);
+    // ctx->Game.TextureCloaked=CopyImageDataToTexture(&Zen,ctx->Game.TextureCloaked, Renders.Cloaked);
+    // ctx->Game.TextureBlip=CopyImageDataToTexture(&Zen,ctx->Game.TextureBlip, Renders.Blip);
+    // ctx->Game.TextureBuffs=CopyImageDataToTexture(&Zen,ctx->Game.TextureBuffs, Renders.Buffs);
+    // ctx->Game.TextureBuffDuration=CopyImageDataToTexture(&Zen,ctx->Game.TextureBuffDuration, Renders.BuffDuration);
+    // ctx->Game.TextureActive=CopyImageDataToTexture(&Zen,ctx->Game.TextureActive, Renders.Active);
+    // ctx->Game.TextureBuildProgress=CopyImageDataToTexture(&Zen,ctx->Game.TextureBuildProgress, Renders.BuildProgress);
+    ctx->Game.TextureBuildable=CopyImageDataToTexture(&Zen,ctx->Game.TextureBuildable, Renders.Buildable);
+    ctx->Game.TexturePathable=CopyImageDataToTexture(&Zen,ctx->Game.TexturePathable, Renders.Pathable);
+    ctx->Game.TexturePlaceholder=CopyImageDataToTexture(&Zen,ctx->Game.TexturePlaceholder, Renders.Placeholder);
+
+#if 0
     UnitArrayFree(&ctx->Game.CommandCenters);
     UnitArrayFree(&ctx->Game.SupplyDepots);
     UnitArrayFree(&ctx->Game.Workers);
@@ -404,8 +233,6 @@ AlistarTick(AlistarContext *ctx)
 
     ctx->Game.WorkersQueued=0;
     ctx->Game.SupplyDepotsQueued=0;
-
-    ctx->requested_obs=0;
 
     ctx->Game.loop++;
 
@@ -458,61 +285,13 @@ AlistarTick(AlistarContext *ctx)
     common=obs.PlayerCommon;
     ctx->Game.Minerals=common.minerals;
     ctx->Game.Vespene=common.vespene;
+#endif
   }
 
-  return ctx->last_response.Type==RESPONSE_TAG_OBSERVATION;
+  return ctx->tick_ready;
 }
 
 
-// Todo: this is something that a backend should implement
-static int
-FindStarcraftExecutableAndDllsDirectory(const char *inst, int arch64, char *exec, char *dlls)
-{ if(!IsFileNameReal(inst))
-  { TRACE_F("invalid installation directory, %s, not found!", Widen(-1,inst));
-    return 0;
-  }
-
-  sprintf_s(exec,MAX_PATH,"%s\\versions\\Base89165\\SC2%s.exe",inst,(arch64?"_x64":""));
-  sprintf_s(dlls,MAX_PATH,"%s\\Support%s", inst,(arch64?"64":""));
-
-  if(!IsFileNameReal(exec))
-  { TRACE_F("Executable not found, %s", Widen(-1,exec));
-    return 0;
-  }
-  if(!IsFileNameReal(dlls))
-  { TRACE_F("Support directory not found, %s", Widen(-1,dlls));
-    return 0;
-  }
-
-  return 1;
-}
-
-static ZenSystemProcess
-LaunchStarcraftProcess(const char *inst, int arch64, const char *addr, int port)
-{
-  char exec[MAX_PATH];
-  char dlls[MAX_PATH];
-  char cmdl[MAX_PATH];
-
-  // Todo: probably cache this ...
-  int res;
-  res=FindStarcraftExecutableAndDllsDirectory(inst,arch64,exec,dlls);
-
-  // Note: if you have a double monitor setup this could be useful,
-  // however, if you have a faulty GPU card that can barely run
-  // two monitors at once, this could be useless ...
-  if(!res) return {};
-
-  sprintf_s(cmdl,sizeof(cmdl)," -listen %s -port %i -displayMode 0 -windowx 1921 -windowy 0",addr,port);
-
-  //"-windowwidth"
-  //"-windowheight"
-
-  ZenSystemProcess proc;
-  res=ZenLaunchSystemProcess(&proc,exec,dlls,cmdl);
-
-  return proc;
-}
 
 
 
