@@ -14,7 +14,7 @@ static const char *ALISTAR_STRING_CONCAT(AliFieldStrings_,ALI_TYPENAME)[]=
 
 ALISTAR_PARSE_FUNCTION void
 ALISTAR_STRING_CONCAT(AliParse,ALI_TYPENAME)
-(xstate *read, ALISTAR_STRING_CONCAT(Ali,ALI_TYPENAME) *val)
+(ssread_t *read, ALISTAR_STRING_CONCAT(Ali,ALI_TYPENAME) *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   {

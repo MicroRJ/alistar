@@ -1,61 +1,71 @@
 // Copyright(C) 2022-2023 Dayan Rodriguez, All rights reserved.
-#ifndef XVAL_C
-#define XVAL_C
+#ifndef _SS_DECODER_ENCODER
+#define _SS_DECODER_ENCODER
 
-// Todo: support for signed integer types
-typedef enum xtype
-{ ali_typeless = 0,
-  ali_int32_type,
-  ali_int64_type,
-  ali_flo32_type,
-  ali_flo64_type,
-  ali_var_type,
-  ali_msg_type,
-  ali_str_type,
-  ali_len_typeless,
-  ali_fix32_typeless,
-  ali_fix64_typeless,
-} xtype;
-typedef struct xblock
+typedef unsigned char *sscursor_t;
+
+typedef enum ssclass_t
+{ ssclass_kTYPELESS=0,
+  ssclass_kTYPELESS32,
+  ssclass_kTYPELESS64,
+  ssclass_kLENGTH,
+  ssclass_kRECORD,
+  ssclass_kSTRING,
+  ssclass_kSIGNED,
+  ssclass_kUNSIGNED,
+  ssclass_kUNSIGNED32,
+  ssclass_kUNSIGNED64,
+  ssclass_kSIGNED32,
+  ssclass_kSIGNED64,
+  ssclass_kFLOAT32,
+  ssclass_kFLOAT64,
+} ssclass_t;
+
+typedef struct ssblock_t ssblock_t;
+typedef struct ssblock_t
 { size_t  len;
   void  * mem;
-} xblock;
-typedef struct xlabel
-{ xtype bit;
-  int   tag;
-} xlabel;
-typedef struct xstack
-{ size_t     len;
-  uint8_t  * loc;
-  uint8_t  * cur;
-  xlabel     lbl;
-  unsigned   has: 1;
-} xstack;
-typedef struct xvalue
-{ xtype          bit; // Note: must be first field
+} ssblock_t;
+
+typedef struct sslabel_t sslabel_t;
+typedef struct sslabel_t
+{ ssclass_t bit;
+  int       tag;
+} sslabel_t;
+
+typedef struct ssstack_t ssstack_t;
+typedef struct ssstack_t
+{ size_t           len;
+  unsigned char  * loc;
+  unsigned char  * cur;
+  sslabel_t        lbl;
+  unsigned         has: 1;
+} ssstack_t;
+
+typedef struct ssvalue_t ssvalue_t;
+typedef struct ssvalue_t
+{ ssclass_t      bit; // Note: must be first field
   unsigned int   tag;
 
   unsigned int   sze;
   unsigned int   enc;
 
-  xvalue        *val;
+  ssvalue_t     *val;
   uint64_t       num;
   double         flo;
 
   unsigned int   len;
   void          *mem;
-} xvalue;
+} ssvalue_t;
 
-typedef struct xstate
-{ xstack    stc_[0x10];
-  xstack  * stc;
-  int       lvl;
-  unsigned  cue:1;
-
-  ali_arena arena;
-} xstate;
-
-
+typedef struct ssread_t ssread_t;
+typedef struct ssread_t
+{ ssstack_t    stc_[0x10];
+  ssstack_t  * stc;
+  int          lvl;
+  unsigned     cue:1;
+  ali_arena    arena;
+} ssread_t;
 
 static int
 ReturnDecodeError(const wchar_t *msg)
@@ -64,15 +74,15 @@ ReturnDecodeError(const wchar_t *msg)
   return 0;
 }
 
-static int // NOTE(COMPILER): FORCEINLINE(ALWAYS)
-VarintSize(uint64_t val)
+static int
+ssvarintlength(uint64_t val)
 { int len;
   for(len=1;val>=0x80;++len,val>>=7);
   return len;
 }
 
 static int
-PeekVarint(unsigned char *cur, uint64_t *res)
+ssload_varint(sscursor_t cur, uint64_t *res)
 { int len,chr;
   uint64_t val,bit;
   len=0;
@@ -87,40 +97,49 @@ PeekVarint(unsigned char *cur, uint64_t *res)
   return(len);
 }
 
-static unsigned char *
-WriteFloat32(unsigned char *cur, float val)
-{
-  *(float *)cur=val;
-  cur+=4;
-  return cur;
-}
-
-static unsigned char *
-WriteFloat64(unsigned char *cur, double val)
-{
-  *(double *)cur=val;
-  cur+=4;
-  return cur;
-}
-
-static unsigned char *
-WriteVarint_(unsigned char *cur, uint64_t val)
+static sscursor_t
+ssstore_varint_(sscursor_t cur, uint64_t val)
 { for(;val>=0x80;val>>=7)
-  { *cur++=(unsigned char)(val|0x80);
-  }
+    *cur++=(unsigned char)(val|0x80);
+
   *cur++=(unsigned char)(val);
   return cur;
 }
 
-static unsigned char *
-WriteVarint(unsigned char *cur, uint64_t val)
-{ unsigned char *res;
-  res=WriteVarint_(cur,val);
+static sscursor_t
+ssstore_float32(sscursor_t cur, float val)
+{
+  *(float *)cur=val;
+  return cur+4;
+}
+
+static sscursor_t
+ssstore_float64(sscursor_t cur, double val)
+{
+  *(double *)cur=val;
+  return cur+8;
+}
+
+static float
+ssload_float32(sscursor_t cur)
+{
+  return *(float *)cur;
+}
+
+static double
+ssload_float64(sscursor_t cur)
+{
+  return *(double *)cur;
+}
+
+static sscursor_t
+ssstore_varint(sscursor_t cur, uint64_t val)
+{ unsigned char *res=ssstore_varint_(cur,val);
 
 #ifdef _DEBUG
   int32_t len;
   uint64_t tst;
-  len=PeekVarint(cur,&tst);
+  len=ssload_varint(cur,&tst);
   Assert(tst==val);
   Assert(len==(res-cur));
 #endif
@@ -130,69 +149,59 @@ WriteVarint(unsigned char *cur, uint64_t val)
 
 static int
 PeekSignedVarint(unsigned char *cur, int64_t *val)
-{ return PeekVarint(cur,(uint64_t *)val);
+{ return ssload_varint(cur,(uint64_t *)val);
 }
 
-static float
-PeekFloat32(unsigned char *cur)
-{ return*(float *)cur;
-}
 
-static double
-PeekFloat64(unsigned char *cur)
-{ return*(double *)cur;
-}
 
-// TODO(RJ):
-// THIS SHOULD TAKE THE LABEL
-static unsigned int // NOTE(COMPILER): INLINE(ALWAYS)
-EncodeLabel(int bit, int tag)
-{ unsigned int raw;
-  raw=((tag<<3)|(bit));
+// TODO(RJ): THIS SHOULD TAKE THE LABEL
+static unsigned int
+ssencode_label(int bit, int tag)
+{ unsigned int raw=((tag<<3)|(bit));
   return raw;
 }
 
-static xlabel
-DecodeLabel(size_t raw)
-{ xlabel label;
+static sslabel_t
+ssdecode_label(size_t raw)
+{ sslabel_t label;
 
   int fmt,tag;
   fmt=(uint32_t)(raw&0b0111);
   tag=(uint32_t)(raw>>3);
 
-  xtype bit;
-  if((fmt==0)) bit=ali_var_type;        else
-  if((fmt==1)) bit=ali_fix64_typeless;  else
-  if((fmt==2)) bit=ali_len_typeless;    else
-  if((fmt==5)) bit=ali_fix32_typeless;  else bit=ali_typeless;
+  ssclass_t bit=ssclass_kTYPELESS;
+  if((fmt==0)) bit=ssclass_kUNSIGNED;   else
+  if((fmt==1)) bit=ssclass_kTYPELESS64; else
+  if((fmt==2)) bit=ssclass_kLENGTH;     else
+  if((fmt==5)) bit=ssclass_kTYPELESS32;
 
   label.bit=bit;
   label.tag=tag;
   return label;
 }
 
-static xblock // NOTE(COMPILER): INLINE(ALWAYS)
+static ssblock_t
 NewBlock(uint32_t sze)
-{ xblock val;
+{ ssblock_t val;
   val.len=sze;
   val.mem=(unsigned char*)mg_malloc(sze); // TODO(RJ):
   return val;
 }
 
-static void // NOTE(COMPILER): INLINE(ALWAYS)
-DelBlock(xblock *val)
+static void
+DelBlock(ssblock_t *val)
 { mg_free(val->mem);
   val->len=0;
   val->mem=0;
 }
 
-static xstack * // NOTE(COMPILER): FORCEINLINE(ALWAYS)
-GetStack(xstate *read)
+static ssstack_t * // NOTE(COMPILER): FORCEINLINE(ALWAYS)
+GetStack(ssread_t *read)
 { return read->stc;
 }
 
 static unsigned char * // NOTE(COMPILER): FORCEINLINE(ALWAYS)
-AdvanceCursor(xstack *stc, size_t val)
+AdvanceCursor(ssstack_t *stc, size_t val)
 { unsigned char *res;
   res=stc->cur;
   stc->cur+= (uint32_t) val; // TODO(RJ):
@@ -200,7 +209,7 @@ AdvanceCursor(xstack *stc, size_t val)
 }
 
 static uint32_t // NOTE(COMPILER): FORCEINLINE(ALWAYS)
-GetUnreadStackSpace(xstack *stc)
+GetUnreadStackSpace(ssstack_t *stc)
 { uint32_t usd,len;
   usd=(uint32_t)(stc->cur-stc->loc);
   len=(uint32_t)(stc->len);
@@ -208,7 +217,7 @@ GetUnreadStackSpace(xstack *stc)
 }
 
 static int // NOTE(COMPILER): FORCEINLINE(ALWAYS)
-StackCursorInBlock(xstack *stc)
+StackCursorInBlock(ssstack_t *stc)
 { unsigned char *min,*max;
   min=stc->loc;
   max=stc->loc+stc->len;
@@ -216,14 +225,14 @@ StackCursorInBlock(xstack *stc)
 }
 
 static int // NOTE(COMPILER): FORCEINLINE(ALWAYS)
-StackCursorOnePastBlock(xstack *stc)
+StackCursorOnePastBlock(ssstack_t *stc)
 { unsigned char *max;
   max=stc->loc+stc->len;
   return (stc->cur==max);
 }
 
 static int
-StackInBlockOf(xstack *stc, xstack *chl)
+StackInBlockOf(ssstack_t *stc, ssstack_t *chl)
 { unsigned char *min,*max;
   min=stc->loc;
   max=stc->loc+stc->len;
@@ -236,7 +245,7 @@ StackInBlockOf(xstack *stc, xstack *chl)
 // Gobble ...
 
 static int64_t
-GobbleSignedVarint(xstack *stc)
+GobbleSignedVarint(ssstack_t *stc)
 {
   int64_t val;
 
@@ -249,12 +258,12 @@ GobbleSignedVarint(xstack *stc)
 }
 
 static uint64_t
-GobbleVarint(xstack *stc)
+GobbleVarint(ssstack_t *stc)
 {
   uint64_t val;
 
   int len;
-  len=PeekVarint(stc->cur,&val);
+  len=ssload_varint(stc->cur,&val);
 
   AdvanceCursor(stc,len);
 
@@ -262,25 +271,25 @@ GobbleVarint(xstack *stc)
 }
 
 static float
-GobbleFloat32(xstack *stc)
+GobbleFloat32(ssstack_t *stc)
 { float val;
-  val=PeekFloat32(stc->cur);
+  val=ssload_float32(stc->cur);
 
   AdvanceCursor(stc,4);
   return val;
 }
 
 static double
-GobbleFloat64(xstack *stc)
+GobbleFloat64(ssstack_t *stc)
 { double val;
-  val=PeekFloat64(stc->cur);
+  val=ssload_float64(stc->cur);
 
   AdvanceCursor(stc,8);
   return val;
 }
 
 static int
-GobbleMemory(xstack *stc, unsigned int len, void *mem)
+GobbleMemory(ssstack_t *stc, unsigned int len, void *mem)
 { int max;
   max=GetUnreadStackSpace(stc);
   len=len<max?len:max;
@@ -292,7 +301,7 @@ GobbleMemory(xstack *stc, unsigned int len, void *mem)
 // ...
 
 static int
-InternalPushStack(xstate *read, size_t len, unsigned char *loc)
+InternalPushStack(ssread_t *read, size_t len, unsigned char *loc)
 { if(read->stc)
   { if(read->stc<read->stc_+ARRAYSIZE(read->stc_))
     { ++read->stc;
@@ -308,7 +317,7 @@ InternalPushStack(xstate *read, size_t len, unsigned char *loc)
 }
 
 static int
-InternalPullStack(xstate *read, xstack *com)
+InternalPullStack(ssread_t *read, ssstack_t *com)
 { if(read->stc)
   { read->stc=read->stc-1;
     if(read->stc>=read->stc_)
@@ -326,18 +335,18 @@ InternalPullStack(xstate *read, xstack *com)
 }
 
 // TODO(RJ): REMOVE THIS
-static xvalue *
-AddValueArray(xvalue *dst, int len, xvalue *arr)
+static ssvalue_t *
+AddValueArray(ssvalue_t *dst, int len, ssvalue_t *arr)
 {
-  xvalue *res;
+  ssvalue_t *res;
   res=sb_add(dst->val,len);
   memcpy(res,arr,sizeof(*arr)*len);
 
   return res;
 }
 
-static xvalue * // NOTE(COMPILER): FORCEINLINE(ALWAYS)
-AddValue(xvalue *dst, int tag, xvalue add)
+static ssvalue_t * // NOTE(COMPILER): FORCEINLINE(ALWAYS)
+AddValue(ssvalue_t *dst, int tag, ssvalue_t add)
 { // TODO(RJ):
   add.tag=tag;
 
@@ -347,44 +356,44 @@ AddValue(xvalue *dst, int tag, xvalue add)
 #define AddBoolValue(dst,tag,bol) AddVarint32Value(dst,tag,bol)
 #define AddEnumValue(dst,tag,enm) AddVarint32Value(dst,tag,enm)
 
-static xvalue *
-AddVarint64Value(xvalue *dst, int tag, uint64_t num)
-{ xvalue val={ali_var_type};
+static ssvalue_t *
+AddVarint64Value(ssvalue_t *dst, int tag, uint64_t num)
+{ ssvalue_t val={ssclass_kUNSIGNED};
   val.tag=tag;
   val.num=num;
   return AddValue(dst,tag,val);
 }
-static xvalue *
-AddVarint32Value(xvalue *dst,int tag, uint32_t num)
+static ssvalue_t *
+AddVarint32Value(ssvalue_t *dst,int tag, uint32_t num)
 { return AddVarint64Value(dst,tag,num);
 }
-static xvalue *
-AddFloat32Value(xvalue *dst,int tag, float num)
-{ xvalue val={ali_flo32_type};
+static ssvalue_t *
+AddFloat32Value(ssvalue_t *dst,int tag, float num)
+{ ssvalue_t val={ssclass_kFLOAT32};
   val.tag=tag;
   val.flo=num;
   return AddValue(dst,tag,val);
 }
-static xvalue *
-AddStringValue(xvalue *dst,int tag,const char *str)
-{ xvalue val={ali_str_type};
+static ssvalue_t *
+AddStringValue(ssvalue_t *dst,int tag,const char *str)
+{ ssvalue_t val={ssclass_kSTRING};
   val.tag=tag;
   val.len=(uint32_t)strlen(str);
   val.mem=(void *)str;
   return AddValue(dst,tag,val);
 }
 static void
-DelValue(xvalue *tar)
+DelValue(ssvalue_t *tar)
 { switch(tar->bit)
-  { case ali_msg_type:
+  { case ssclass_kRECORD:
     { tar->enc=tar->sze=0;
-      xvalue *itr;
+      ssvalue_t *itr;
       for(itr=tar->val;itr<tar->val+sb_count(tar->val);++itr)
       { DelValue(itr);
       }
       sb_free(tar->val);
     } break;
-    case ali_str_type: // Todo: handle when memory is owned
+    case ssclass_kSTRING: // Todo: handle when memory is owned
     { tar->enc=tar->sze=0;
     } break;
     default:
@@ -393,11 +402,11 @@ DelValue(xvalue *tar)
   }
 }
 static void
-ReadyValueForSerialization(xvalue *tar, unsigned inc)
+ReadyValueForSerialization(ssvalue_t *tar, unsigned inc)
 { switch(tar->bit)
-  { case ali_msg_type:
+  { case ssclass_kRECORD:
     { tar->enc=tar->sze=0;
-      xvalue *itr;
+      ssvalue_t *itr;
       for(itr=tar->val;itr<tar->val+sb_count(tar->val);++itr)
       { ReadyValueForSerialization(itr,1);
         // Note: here we include the size of the encoded child into the regular size of the parent.
@@ -405,33 +414,33 @@ ReadyValueForSerialization(xvalue *tar, unsigned inc)
         tar->enc+=itr->enc;
       }
       if(inc)
-      { tar->enc+=VarintSize(EncodeLabel(2,tar->tag));
-        tar->enc+=VarintSize(tar->sze);
+      { tar->enc+=ssvarintlength(ssencode_label(2,tar->tag));
+        tar->enc+=ssvarintlength(tar->sze);
       }
     } break;
-    case ali_str_type:
+    case ssclass_kSTRING:
     { tar->enc=tar->sze=tar->len;
       if(inc)
-      { tar->enc+=VarintSize(EncodeLabel(2,tar->tag));
-        tar->enc+=VarintSize(tar->sze);
+      { tar->enc+=ssvarintlength(ssencode_label(2,tar->tag));
+        tar->enc+=ssvarintlength(tar->sze);
       }
     } break;
-    case ali_fix32_typeless: case ali_flo32_type: case ali_int32_type:
+    case ssclass_kTYPELESS32: case ssclass_kFLOAT32: case ssclass_kSIGNED32:
     { tar->enc=tar->sze=4;
       if(inc)
-      { tar->enc+=VarintSize(EncodeLabel(5,tar->tag));
+      { tar->enc+=ssvarintlength(ssencode_label(5,tar->tag));
       }
     } break;
-    case ali_fix64_typeless: case ali_flo64_type: case ali_int64_type:
+    case ssclass_kTYPELESS64: case ssclass_kFLOAT64: case ssclass_kSIGNED64:
     { tar->enc=tar->sze=8;
       if(inc)
-      { tar->enc+=VarintSize(EncodeLabel(1,tar->tag));
+      { tar->enc+=ssvarintlength(ssencode_label(1,tar->tag));
       }
     } break;
-    case ali_var_type:
-    { tar->enc=tar->sze=VarintSize(tar->num);
+    case ssclass_kUNSIGNED:
+    { tar->enc=tar->sze=ssvarintlength(tar->num);
       if(inc)
-      { tar->enc+=VarintSize(EncodeLabel(1,tar->tag));
+      { tar->enc+=ssvarintlength(ssencode_label(1,tar->tag));
       }
     } break;
     default:
@@ -441,43 +450,43 @@ ReadyValueForSerialization(xvalue *tar, unsigned inc)
 }
 
 static void
-SerializeValueInternal(xblock *mem, unsigned char **cur, xvalue *tar, int inc)
+SerializeValueInternal(ssblock_t *mem, unsigned char **cur, ssvalue_t *tar, int inc)
 { switch(tar->bit)
-  { case ali_msg_type:
+  { case ssclass_kRECORD:
     { if(inc)
-      { *cur=WriteVarint(*cur,EncodeLabel(2,tar->tag));
-        *cur=WriteVarint(*cur,tar->sze);
+      { *cur=ssstore_varint(*cur,ssencode_label(2,tar->tag));
+        *cur=ssstore_varint(*cur,tar->sze);
       }
-      xvalue *itr;
+      ssvalue_t *itr;
       for(itr=tar->val;itr<tar->val+sb_count(tar->val);++itr)
       { SerializeValueInternal(mem,cur,itr,1);
       }
     } break;
-    case ali_str_type:
+    case ssclass_kSTRING:
     { if(inc)
-      { *cur=WriteVarint(*cur,EncodeLabel(2,tar->tag));
-        *cur=WriteVarint(*cur,tar->sze);
+      { *cur=ssstore_varint(*cur,ssencode_label(2,tar->tag));
+        *cur=ssstore_varint(*cur,tar->sze);
       }
       memcpy(*cur,tar->mem,tar->sze);
       *cur+=tar->sze;
     } break;
-    case ali_fix64_typeless: case ali_flo64_type: case ali_int64_type:
+    case ssclass_kTYPELESS64: case ssclass_kFLOAT64: case ssclass_kSIGNED64:
     { if(inc)
-      { *cur=WriteVarint(*cur,EncodeLabel(1,tar->tag));
+      { *cur=ssstore_varint(*cur,ssencode_label(1,tar->tag));
       }
-      *cur=WriteFloat64(*cur,(double)tar->flo);
+      *cur=ssstore_float64(*cur,(double)tar->flo);
     } break;
-    case ali_fix32_typeless: case ali_flo32_type: case ali_int32_type:
+    case ssclass_kTYPELESS32: case ssclass_kFLOAT32: case ssclass_kSIGNED32:
     { if(inc)
-      { *cur=WriteVarint(*cur,EncodeLabel(5,tar->tag));
+      { *cur=ssstore_varint(*cur,ssencode_label(5,tar->tag));
       }
-      *cur=WriteFloat32(*cur,(float)tar->flo);
+      *cur=ssstore_float32(*cur,(float)tar->flo);
     } break;
-    case ali_var_type:
+    case ssclass_kUNSIGNED:
     { if(inc)
-      { *cur=WriteVarint(*cur,EncodeLabel(0,tar->tag));
+      { *cur=ssstore_varint(*cur,ssencode_label(0,tar->tag));
       }
-      *cur=WriteVarint(*cur,tar->num);
+      *cur=ssstore_varint(*cur,tar->num);
     } break;
     default:
     { Assert(!"error");
@@ -485,11 +494,11 @@ SerializeValueInternal(xblock *mem, unsigned char **cur, xvalue *tar, int inc)
   }
 }
 
-static xblock
-SerializeValue(xvalue *tar)
+static ssblock_t
+SerializeValue(ssvalue_t *tar)
 { ReadyValueForSerialization(tar,0);
 
-  xblock mem;
+  ssblock_t mem;
   mem=NewBlock(tar->enc);
 
   unsigned char *cur;
@@ -499,11 +508,11 @@ SerializeValue(xvalue *tar)
   return mem;
 }
 
-static xlabel
-InternalConsumeLabel(xstate *read)
+static sslabel_t
+InternalConsumeLabel(ssread_t *read)
 { Assert(read->stc->has);
 
-  xlabel label;
+  sslabel_t label;
   label=read->stc->lbl;
 
   read->stc->has=0;
@@ -512,26 +521,26 @@ InternalConsumeLabel(xstate *read)
 }
 
 static void
-InternalGetUnknownValue(xstate *read)
+InternalGetUnknownValue(ssread_t *read)
 {
-  xstack *block;
+  ssstack_t *block;
   block=GetStack(read);
 
-  xlabel label;
+  sslabel_t label;
   label=InternalConsumeLabel(read);
 
   int32_t isl;
-  isl=(label.bit==ali_len_typeless) || (label.bit==ali_msg_type) || (label.bit==ali_str_type);
+  isl=(label.bit==ssclass_kLENGTH) || (label.bit==ssclass_kRECORD) || (label.bit==ssclass_kSTRING);
 
   uint64_t val;
-  if((label.bit==ali_var_type) || isl)
+  if((label.bit==ssclass_kUNSIGNED) || isl)
   { val=GobbleVarint(block);
     if(isl) AdvanceCursor(block,val);
   } else
-  if((label.bit==ali_fix32_typeless))
+  if((label.bit==ssclass_kTYPELESS32))
   { AdvanceCursor(block,4);
   } else
-  if((label.bit==ali_fix64_typeless))
+  if((label.bit==ssclass_kTYPELESS64))
   { AdvanceCursor(block,8);
   } else
   {
@@ -540,15 +549,15 @@ InternalGetUnknownValue(xstate *read)
 }
 
 static int
-GetSignedVarintValue64(xstate *read, int64_t *value)
+GetSignedVarintValue64(ssread_t *read, int64_t *value)
 {
-  xstack *block;
+  ssstack_t *block;
   block=GetStack(read);
 
-  xlabel label;
+  sslabel_t label;
   label=InternalConsumeLabel(read);
 
-  if((label.bit!=ali_var_type)) return ReturnDecodeError(L"invalid call, tag is too different from type");
+  if((label.bit!=ssclass_kUNSIGNED)) return ReturnDecodeError(L"invalid call, tag is too different from type");
 
   int64_t val;
   val=GobbleSignedVarint(block);
@@ -558,15 +567,15 @@ GetSignedVarintValue64(xstate *read, int64_t *value)
 }
 
 static int
-GetVarint64Value(xstate *read, uint64_t *value)
+GetVarint64Value(ssread_t *read, uint64_t *value)
 {
-  xstack *block;
+  ssstack_t *block;
   block=GetStack(read);
 
-  xlabel label;
+  sslabel_t label;
   label=InternalConsumeLabel(read);
 
-  if((label.bit!=ali_var_type)) return ReturnDecodeError(L"invalid call, tag is too different from type");
+  if((label.bit!=ssclass_kUNSIGNED)) return ReturnDecodeError(L"invalid call, tag is too different from type");
 
   uint64_t val;
   val=GobbleVarint(block);
@@ -576,7 +585,7 @@ GetVarint64Value(xstate *read, uint64_t *value)
 }
 
 static int
-GetVarint32Value(xstate *read, unsigned int *val32)
+GetVarint32Value(ssread_t *read, unsigned int *val32)
 {
   uint64_t val64;
 
@@ -590,34 +599,34 @@ GetVarint32Value(xstate *read, unsigned int *val32)
 
 // Todo: IMPLEMENT
 static int
-GetSignedVarint32Value(xstate *read, int *val32)
+GetSignedVarint32Value(ssread_t *read, int *val32)
 {
   return GetVarint32Value(read,(unsigned int *) val32);
 }
 
 static int
-GetVarintValue(xstate *read, unsigned int *val)
+GetVarintValue(ssread_t *read, unsigned int *val)
 {
   return GetVarint32Value(read,val);
 }
 
 // TODO(RJ): OVERLOAD, REMOVE!
 static int
-GetVarintValue(xstate *read, int *val)
+GetVarintValue(ssread_t *read, int *val)
 {
   return GetVarint32Value(read,(unsigned int *)val);
 }
 
 static int
-GetFloat32Value(xstate *read, float *val)
+GetFloat32Value(ssread_t *read, float *val)
 {
-  xstack *block;
+  ssstack_t *block;
   block=GetStack(read);
 
-  xlabel label;
+  sslabel_t label;
   label=InternalConsumeLabel(read);
 
-  if((label.bit!=ali_flo32_type)&&(label.bit!=ali_fix32_typeless))
+  if((label.bit!=ssclass_kFLOAT32)&&(label.bit!=ssclass_kTYPELESS32))
     return ReturnDecodeError(L"invalid call, tag is too different from type");
 
   float res;
@@ -628,15 +637,15 @@ GetFloat32Value(xstate *read, float *val)
 }
 
 static int
-GetFloat64Value(xstate *read, double *val)
+GetFloat64Value(ssread_t *read, double *val)
 {
-  xstack *block;
+  ssstack_t *block;
   block=GetStack(read);
 
-  xlabel label;
+  sslabel_t label;
   label=InternalConsumeLabel(read);
 
-  if((label.bit!=ali_flo64_type)&&(label.bit!=ali_fix64_typeless))
+  if((label.bit!=ssclass_kFLOAT64)&&(label.bit!=ssclass_kTYPELESS64))
     return ReturnDecodeError(L"invalid call, tag is too different from type");
 
   double res;
@@ -647,20 +656,20 @@ GetFloat64Value(xstate *read, double *val)
 }
 
 static int
-GetEnumValue(xstate *read, void *value)
+GetEnumValue(ssread_t *read, void *value)
 { return GetVarintValue(read, (unsigned int *) value); // TODO(RJ):
 }
 
 static int
-GetStringValue(xstate *read, char **val)
+GetStringValue(ssread_t *read, char **val)
 {
-  xstack *block;
+  ssstack_t *block;
   block=GetStack(read);
 
-  xlabel label;
+  sslabel_t label;
   label=InternalConsumeLabel(read);
 
-  if((label.bit!=ali_len_typeless) && (label.bit!=ali_str_type))
+  if((label.bit!=ssclass_kLENGTH) && (label.bit!=ssclass_kSTRING))
   {
     return ReturnDecodeError(L"invalid call, tag is too different from type");
   }
@@ -683,15 +692,15 @@ GetStringValue(xstate *read, char **val)
 }
 
 static int
-GetStringValueNoCopy(xstate *read, char **val)
+GetStringValueNoCopy(ssread_t *read, char **val)
 {
-  xstack *block;
+  ssstack_t *block;
   block=GetStack(read);
 
-  xlabel label;
+  sslabel_t label;
   label=InternalConsumeLabel(read);
 
-  if((label.bit!=ali_len_typeless) && (label.bit!=ali_str_type))
+  if((label.bit!=ssclass_kLENGTH) && (label.bit!=ssclass_kSTRING))
   {
     return ReturnDecodeError(L"invalid call, tag is too different from type");
   }
@@ -708,15 +717,15 @@ GetStringValueNoCopy(xstate *read, char **val)
 }
 
 static int
-GetBytesValue(xstate *read, unsigned char **val)
+GetBytesValue(ssread_t *read, unsigned char **val)
 {
-  xstack *block;
+  ssstack_t *block;
   block=GetStack(read);
 
-  xlabel label;
+  sslabel_t label;
   label=InternalConsumeLabel(read);
 
-  if((label.bit!=ali_len_typeless) && (label.bit!=ali_str_type))
+  if((label.bit!=ssclass_kLENGTH) && (label.bit!=ssclass_kSTRING))
   {
     return ReturnDecodeError(L"invalid call, tag is too different from type");
   }
@@ -738,15 +747,15 @@ GetBytesValue(xstate *read, unsigned char **val)
 }
 
 static int
-GetBytesValueNoCopy(xstate *read, unsigned char **val)
+GetBytesValueNoCopy(ssread_t *read, unsigned char **val)
 {
-  xstack *block;
+  ssstack_t *block;
   block=GetStack(read);
 
-  xlabel label;
+  sslabel_t label;
   label=InternalConsumeLabel(read);
 
-  if((label.bit!=ali_len_typeless) && (label.bit!=ali_str_type))
+  if((label.bit!=ssclass_kLENGTH) && (label.bit!=ssclass_kSTRING))
   {
     return ReturnDecodeError(L"invalid call, tag is too different from type");
   }
@@ -762,7 +771,7 @@ GetBytesValueNoCopy(xstate *read, unsigned char **val)
 }
 
 static int
-NextField(xstate *read)
+NextField(ssread_t *read)
 {
   if(read->stc->has)
   { // Note: this means we have a label, in other words, the user had already called next_field
@@ -772,10 +781,10 @@ NextField(xstate *read)
     if(read->cue)
     { read->cue=0;
 
-      xlabel label;
+      sslabel_t label;
       label=InternalConsumeLabel(read);
 
-      if((label.bit!=ali_len_typeless) && (label.bit!=ali_msg_type))
+      if((label.bit!=ssclass_kLENGTH) && (label.bit!=ssclass_kRECORD))
       {
         return ReturnDecodeError(L"invalid call, tag is too different from type");
       }
@@ -800,8 +809,8 @@ NextField(xstate *read)
     size_t raw;
     raw=GobbleVarint(read->stc);
 
-    xlabel label;
-    label=DecodeLabel(raw);
+    sslabel_t label;
+    label=ssdecode_label(raw);
 
     read->stc->lbl=label;
     read->stc->has=1;
@@ -822,7 +831,7 @@ NextField(xstate *read)
 
 
 static void
-MessageCue(xstate *read)
+MessageCue(ssread_t *read)
 {
   // Note: this could happen if the user manually specified a cue
   if(!read->cue)
@@ -835,7 +844,7 @@ MessageCue(xstate *read)
   }
 }
 static int
-GetTag(xstate *read)
+GetTag(ssread_t *read)
 {
   Assert(read->stc->has);
   return read->stc->lbl.tag;
@@ -845,7 +854,7 @@ GetTag(xstate *read)
 
 
 static void
-Apportion(xstate *read, size_t len, const void *cur)
+Apportion(ssread_t *read, size_t len, const void *cur)
 { // ali_rst_(read);
   InternalPushStack(read,len,(unsigned char *)cur);
 }

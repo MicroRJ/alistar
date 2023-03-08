@@ -52,12 +52,11 @@ LaunchStarcraftProcess(const char *inst, int arch64, const char *addr, int port)
   char cmdl[MAX_PATH];
 
   // Todo: probably cache this ...
-  int res;
-  res=FindStarcraftExecutableAndDllsDirectory(inst,arch64,exec,dlls);
+  int res=FindStarcraftExecutableAndDllsDirectory(inst,arch64,exec,dlls);
 
   // Note: if you have a double monitor setup this could be useful,
   // however, if you have a faulty GPU card that can barely run
-  // two monitors at once, this could be useless ...
+  // two monitors at once, this is useless ...
   if(!res) return {};
 
   sprintf_s(cmdl,sizeof(cmdl)," -listen %s -port %i -displayMode 0 -windowx 1921 -windowy 0",addr,port);
@@ -66,7 +65,7 @@ LaunchStarcraftProcess(const char *inst, int arch64, const char *addr, int port)
   //"-windowheight"
 
   ZenSystemProcess proc;
-  res=ZenLaunchSystemProcess(&proc,exec,dlls,cmdl);
+  ZenLaunchSystemProcess(&proc,exec,dlls,cmdl);
 
   return proc;
 }

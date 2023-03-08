@@ -1,9 +1,11 @@
 // Copyright(C) 2022-2023 Dayan Rodriguez, All rights reserved.
 #define ZEN_APPMODE_CONSOLE
+#define _ZEN_GLOBAL
 #include "brazen.h"
 
 #include "alistar.c"
 
+// Note: Alistar context, one per server-client connection ...
 static AlistarContext Ali;
 
 static void
@@ -13,10 +15,16 @@ ZenMain(int _, char **)
   AlistarEstablishConnection(&Ali,true,5679);
 
   for(;;)
-  { if(AlistarTick(&Ali))
+  {
+    // Note: update data with previously requested info, request more info
+    if(AlistarTick(&Ali))
     {
+      // Note: now we have some data to work with ...
+
       TRACE_I("tick...");
     }
+
+    // Note: sleep here for no reason
     Sleep(250);
   }
 

@@ -1,11 +1,9 @@
 @REM  Copyright(C) 2022-2023 Dayan Rodriguez, All rights reserved.
-@REM # For debug builds I can't compile with /Za because windows complains about it...
-@REM /MDd
+@CALl taskkill /F /IM main.exe
 @SET myDebugOptions=/Od /MTd
-@SET myCompilerOptions=/options:strict /nologo /TP /Z7 /WX /W4 /Fa /std:c++20
+@SET myCompilerOptions=/options:strict /nologo /TC /Z7 /WX /W4 /Fa
 @SET myLinkerOptions=/INCREMENTAL:NO
 
-@SET myInclude=/I. /I.. /I..\detroit /I..\dr /I..\vendor\stb /Ivendor /Ivendor\civetweb\include /Ivendor\civetweb\src
-@SET mySourceFiles=main.c
+@SET myInclude=/I. /I.. /I..\zen /I..\dr /I..\vendor\stb /Ivendor /Ivendor\civetweb\include /Ivendor\civetweb\src
 @CALL cl %myCompilerOptions% %myDebugOptions% %myInclude% main.c /link /SUBSYSTEM:WINDOWS %myLinkerOptions%
-@CALL cl %myCompilerOptions% %myDebugOptions% %myInclude% simple.c /link /SUBSYSTEM:CONSOLE %myLinkerOptions%
+@REM @CALL cl %myCompilerOptions% %myDebugOptions% %myInclude% simple.c /link /SUBSYSTEM:CONSOLE %myLinkerOptions%

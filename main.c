@@ -1,18 +1,36 @@
-// Unrelated todos:
-// fix text rendering ...
-// fix gui layering ...
-// fix latent input ...
-// cross-platform compatibility ...
+#include "rx\rx.c"
+
+
+INT32 WINAPI
+WinMain(HINSTANCE inst, HINSTANCE prev_inst, PSTR cmdl, INT cmds)
+{
+  (void)inst;
+  (void)prev_inst;
+  (void)cmdl;
+  (void)cmds;
+
+  rxinit(L"Alistar - Command Center");
+
+  rxtexture_t texture=rxload_texture_file("media\\alistar_0.1.PNG");
+
+  for(;;)
+  {
+    rxdraw(texture,rx.LinearSampler,0,0,1080,720);
+
+    rxtick();
+  }
+}
+
+
+
+#if 0
 #define ZEN_APPMODE_WINDOWED
 #include "brazen.h"
 #include "alistar.c"
-
 static AlistarContext Ali;
-
 static i32
 ZenBackgroundFunc(ZenCore *Core, void*)
 {
-  AlistarEstablishConnection(&Ali,true,5679);
 
   return 1;
 }
@@ -20,11 +38,12 @@ ZenBackgroundFunc(ZenCore *Core, void*)
 static void
 ZenMain(int _, char **)
 {
-  ZenInitialize({}, L"Alistar Command Center");
+  ZenInitialize(L"Alistar Command Center");
 
   AlistarCreateContext(&Ali);
+  AlistarEstablishConnection(&Ali,true,5679);
 
-  ZenBackground(ZenBackgroundFunc);
+  // ZenBackground(ZenBackgroundFunc);
 
   ZenView view_pool[0x20]={};
 
@@ -36,13 +55,14 @@ ZenMain(int _, char **)
   Point2D build_location;
   (void) build_location;
 
-  while(!Zen.Quitted)
+  do
   {
     ZenWindow *Window;
     Window=ZenGetActiveWindow();
 
     ZEN_IMGLUI *Glui;
-    Glui=&Zen.Graphics.ImGlui;
+    Glui=&Zen.ImGlui;
+
     ZenFontDebugUI(Glui);
 
     if(AlistarTick(&Ali))
@@ -65,10 +85,8 @@ ZenMain(int _, char **)
       }
     }
 
-    ZenTick();
-  }
+  } while(ZenTick());
+
   AlistarObliterateConnection(&Ali);
 }
-
-
-
+#endif

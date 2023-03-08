@@ -11,21 +11,20 @@ BitsToBytes(unsigned char *bytes, int bits)
   return 8;
 }
 
-// TODO(RJ): REMOVE FROM HERE
-// TODO(RJ): THIS IS TEMPORARY
 ZEN_FUNCTION ZenTexture // COMPILER(RJ): FORCEINLINE
 ZenCoreCreateSoftTextureForThisFrame(ZenCore *Core, i32 Format, i32 DimenX, i32 DimenY)
-{ void *Memory = ZenCoreFrameAlloc(Core, ZenComputeTrimmedSizeForTexture(Format, DimenX, DimenY));
-  ZenTexture Texture = ZenUnboundTexture(DE_CPU_ACCESS, Format, DimenX, DimenY, Memory);
+{ void *Memory = ZenCoreTickAlloc(Core,DimenX*DimenY*PIXEL_FORMAT_SIZE(Format));
+  ZenTexture Texture = ZenMakeTexture(DE_CPU_ACCESS, Format, DimenX, DimenY, Memory);
   // NOTE(RJ): ALLOCATIONS ARE ZEROED ALREADY, BUT I KNOW THAT'LL CHANGE!
   ZenZeroTextureMemory(&Texture);
   return Texture;
 }
 
 static ZenTexture
-AliConvertTexture(ZenCore *Core, ImageData data)
+AliConvertToTexture(ZenCore *Core, ImageData data)
 {
   ZenTexture tex={};
+#if 1
   if(data.bits_per_pixel==1)
   { tex=ZenCoreCreateSoftTextureForThisFrame(Core,PIXEL_FORMAT_RGB8,data.size.x,data.size.y);
 
@@ -37,7 +36,7 @@ AliConvertTexture(ZenCore *Core, ImageData data)
     }
   } else
   if(data.bits_per_pixel==8)
-  { tex=ZenUnboundTexture(DE_CPU_ACCESS,PIXEL_FORMAT_RGB8,data.size.x,data.size.y,data.bytes);
+  { tex=ZenMakeTexture(DE_CPU_ACCESS,PIXEL_FORMAT_RGB8,data.size.x,data.size.y,data.bytes);
   } else
   if(data.bits_per_pixel==24)
   { tex=ZenCoreCreateSoftTextureForThisFrame(Core,PIXEL_FORMAT_RGBA8888,data.size.x,data.size.y);
@@ -55,28 +54,28 @@ AliConvertTexture(ZenCore *Core, ImageData data)
     }
   } else
   if(data.bits_per_pixel==32)
-  { tex=ZenUnboundTexture(DE_CPU_ACCESS,PIXEL_FORMAT_RGBA8888,data.size.x,data.size.y,data.bytes);
+  { tex=ZenMakeTexture(DE_CPU_ACCESS,PIXEL_FORMAT_RGBA8888,data.size.x,data.size.y,data.bytes);
   }
-
+#endif
   return tex;
 }
 
 static ZenTexture *
 CopyImageDataToTexture(ZenCore *Core, ZenTexture *Texture, ImageData data)
 {
+  if((data.size.x<=0)||(data.size.y<=0)||(data.bytes==0)||(data.bits_per_pixel<=0))
+    return 0;
 
-  if((data.size.x<=0)||(data.size.y<=0)||(data.bytes==0)||(data.bits_per_pixel<=0)) return 0;
-
-  ZenTexture tex;
-  tex=AliConvertTexture(Core,data);
+  ZenTexture tex=AliConvertToTexture(Core,data);
 
   if((!Texture) || (data.size.x != Texture->DimenX) || (data.size.y != Texture->DimenY))
   { TRACE_I("Create Texture");
-    Texture=ZenCoreCreateTexture(Core,DE_GPU_READ|DE_CPU_WRITE,tex.Format,tex.DimenX,tex.DimenY,tex.Memory);
+    Texture=ZenCoreCreateTextureEx(Core,DE_GPU_READ|DE_CPU_WRITE,tex.Format,tex.DimenX,tex.DimenY,
+      tex.DimenX*PIXEL_FORMAT_SIZE(tex.Format),tex.Memory);
   } else
-  { if(ZenCoreBorrowTextureChronicle(Core, Texture, ZEN_WRITE))
+  { if(ZenCoreBorrowTexture(Core, Texture))
     { ZenCopyTexture(Texture, &tex);
-      ZenCoreReturnTextureChronicle(Core, Texture);
+      ZenCoreReturnTexture(Core, Texture);
     }
   }
 

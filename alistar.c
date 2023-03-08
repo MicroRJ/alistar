@@ -22,19 +22,19 @@
 #include "ali-zen.c"
 
 ALISTAR_PARSE_FUNCTION void
-ParseRequest(xstate *read, Request *val);
+ParseRequest(ssread_t *read, Request *val);
 
 static int
-AlistarSendPayload(AlistarContext *ctx, int tag, xvalue *pay)
+AlistarSendPayload(AlistarContext *ctx, int tag, ssvalue_t *pay)
 {
   // TODO(RJ): DELETE THE VALUE
-  xvalue req={ali_msg_type};
+  ssvalue_t req={ssclass_kRECORD};
   AddValue(&req,tag,*pay);
 
-  xblock mem;
+  ssblock_t mem;
   mem=SerializeValue(&req);
 
-  xstate read={};
+  ssread_t read={};
   Apportion(&read,mem.len,mem.mem);
   Request pars={};
   ParseRequest(&read, &pars);
@@ -81,7 +81,7 @@ AlistarOnSocketDataReceived(mg_connection* conn, int flags, char *data, size_t s
   // Todo:
   WriteFileData((unsigned int)size,data,"last_response.txt");
 
-  xstate read={};
+  ssread_t read={};
   Apportion(&read,size,data);
 
   Response *response;

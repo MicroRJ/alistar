@@ -20,12 +20,12 @@
 
 // Note: you must define this function for your own backend
 static int
-AlistarSendRequest(struct AlistarContext *, xvalue *);
+AlistarSendRequest(struct AlistarContext *, ssvalue_t *);
 
 
 // Note: these are functions used by the api
 static int
-AlistarSendPayload(struct AlistarContext *, int tag, xvalue *);
+AlistarSendPayload(struct AlistarContext *, int tag, ssvalue_t *);
 
 
 // Todo: make enums
@@ -114,7 +114,7 @@ typedef f32x3 Point3D;
 typedef i32x4 RectangleI;
 
 ALISTAR_PARSE_FUNCTION void
-ParsePoint2DI(xstate *read, Point2DI *val)
+ParsePoint2DI(ssread_t *read, Point2DI *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: GetSignedVarint32Value(read,&val->x); break;// TODO(RJ):
@@ -122,7 +122,7 @@ ParsePoint2DI(xstate *read, Point2DI *val)
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParsePoint2D(xstate *read, Point2D *val)
+ParsePoint2D(ssread_t *read, Point2D *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: GetFloat32Value(read,&val->x); break;
@@ -130,7 +130,7 @@ ParsePoint2D(xstate *read, Point2D *val)
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParsePoint3D(xstate *read, Point3D *val)
+ParsePoint3D(ssread_t *read, Point3D *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: GetFloat32Value(read,&val->x); break;// TODO(RJ):
@@ -139,11 +139,11 @@ ParsePoint3D(xstate *read, Point3D *val)
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParseSize2DI(xstate *read, Size2DI *val)
+ParseSize2DI(ssread_t *read, Size2DI *val)
 { return ParsePoint2DI(read,val);
 }
 ALISTAR_PARSE_FUNCTION void
-ParseRectangleI(xstate *read, RectangleI *val)
+ParseRectangleI(ssread_t *read, RectangleI *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: ParsePoint2DI(read,&val->min); break;
@@ -156,7 +156,7 @@ typedef struct ImageData
   unsigned char *bytes;
 } ImageData;
 ALISTAR_PARSE_FUNCTION void
-ParseImageData(xstate *read, ImageData *val)
+ParseImageData(ssread_t *read, ImageData *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: GetVarintValue(read,&val->bits_per_pixel); break;
@@ -185,7 +185,7 @@ typedef struct ObservationFeatureLayer
 } ObservationFeatureLayer;
 
 ALISTAR_PARSE_FUNCTION void
-AliParseObservationFeatureLayer(xstate *read, ObservationFeatureLayer *val)
+AliParseObservationFeatureLayer(ssread_t *read, ObservationFeatureLayer *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: AliParseFeatureLayers(read,&val->Renders);                break;
@@ -510,17 +510,17 @@ RequestJoinGameAsParticipant(AlistarContext *ctx, int race, const char *name);
 static const wchar_t *
 AlistarActionResultW(ActionResult result);
 
-static xvalue
+static ssvalue_t
 CreateParticipantPlayerSetup(const char *name)
-{ xvalue req={ali_msg_type};
+{ ssvalue_t req={ssclass_kRECORD};
   AddVarint32Value(&req,/*tag: */1, /*value: */ PARTICIPANT);
   AddStringValue(&req,/*tag: */4, /*value: */ name);
   return req;
 }
-static xvalue
+static ssvalue_t
 CreateComputerPlayerSetup(int race, int diff, int build, const char *name)
 { // Computer=2
-  xvalue req={ali_msg_type};
+  ssvalue_t req={ssclass_kRECORD};
   AddVarint32Value(&req, /*tag*/1, COMPUTER );
   AddEnumValue(&req,   /*tag*/2,     race );
   AddEnumValue(&req,   /*tag*/3,     diff );
@@ -528,35 +528,35 @@ CreateComputerPlayerSetup(int race, int diff, int build, const char *name)
   AddEnumValue(&req,   /*tag*/5,    build );
   return req;
 }
-static xvalue
+static ssvalue_t
 ValuePoint2D(Point2D val)
-{ xvalue res={ali_msg_type};
+{ ssvalue_t res={ssclass_kRECORD};
   AddFloat32Value(&res,1,val.x);
   AddFloat32Value(&res,2,val.y);
   return res;
 }
-static xvalue
+static ssvalue_t
 ValueSize2DI(Size2DI val)
-{ xvalue res={ali_msg_type};
+{ ssvalue_t res={ssclass_kRECORD};
   AddVarint32Value(&res,1,val.x);
   AddVarint32Value(&res,2,val.y);
   return res;
 }
-static xvalue
+static ssvalue_t
 AliCameraSetupValueNoMinimap(
   Size2DI resolution,
   float   width,
   int     crop_to_playable_area,
   int     allow_cheating_layers )
 {
-  xvalue req={ali_msg_type};
+  ssvalue_t req={ssclass_kRECORD};
   AddValue(&req,2,ValueSize2DI(resolution));
   AddFloat32Value(&req,1,width);
   AddBoolValue(&req,4,crop_to_playable_area);
   AddBoolValue(&req,8,allow_cheating_layers);
   return req;
 }
-static xvalue
+static ssvalue_t
 AliCameraSetupValue(
   Size2DI resolution,
   Size2DI minimap_resolution,
@@ -564,7 +564,7 @@ AliCameraSetupValue(
   int     crop_to_playable_area,
   int     allow_cheating_layers )
 {
-  xvalue req={ali_msg_type};
+  ssvalue_t req={ssclass_kRECORD};
   AddValue(&req,2,ValueSize2DI(resolution));
   AddValue(&req,3,ValueSize2DI(minimap_resolution));
   AddFloat32Value(&req,1,width);
@@ -572,9 +572,9 @@ AliCameraSetupValue(
   AddBoolValue(&req,8,allow_cheating_layers);
   return req;
 }
-static xvalue
+static ssvalue_t
 CreateDefaultInterfaceOptions()
-{ xvalue req={ali_msg_type};
+{ ssvalue_t req={ssclass_kRECORD};
   AddBoolValue(&req,1,TRUE);
   AddBoolValue(&req,8,TRUE);
   // AddValue(&req,4,AliCameraSetupValueNoMinimap({512,512},8.f,FALSE,TRUE));
@@ -584,17 +584,17 @@ CreateDefaultInterfaceOptions()
 }
 static i32
 RequestGameInfo(AlistarContext *ctx)
-{ xvalue pay={ali_msg_type};
+{ ssvalue_t pay={ssclass_kRECORD};
   return AlistarSendPayload(ctx,9,&pay);
 }
 static i32
 RequestAvailableMaps(AlistarContext *ctx)
-{ xvalue pay={ali_msg_type};
+{ ssvalue_t pay={ssclass_kRECORD};
   return AlistarSendPayload(ctx,17,&pay);
 }
 static i32
 RequestCreateGame(AlistarContext *ctx)
-{ xvalue pay={ali_msg_type};
+{ ssvalue_t pay={ssclass_kRECORD};
   AddStringValue(&pay, /*tag*/2, "16-Bit LE"); // Battlenet map name
   AddBoolValue(&pay,   /*tag*/6, true);       // Realtime?
   AddValue(&pay,       /*tag*/3, CreateParticipantPlayerSetup(/*name*/"RoyJacobs"));
@@ -603,7 +603,7 @@ RequestCreateGame(AlistarContext *ctx)
 }
 static i32
 RequestJoinGameAsParticipant(AlistarContext *ctx, int race, const char *name)
-{ xvalue pay={ali_msg_type};
+{ ssvalue_t pay={ssclass_kRECORD};
   AddEnumValue(&pay,  /* tag */ 1, race);
   AddStringValue(&pay,/* tag */ 7, name);
   AddValue(&pay,      /* tag */ 3, CreateDefaultInterfaceOptions()); // 3:Options
@@ -611,14 +611,14 @@ RequestJoinGameAsParticipant(AlistarContext *ctx, int race, const char *name)
 }
 static int
 RequestObservation(AlistarContext *ctx, int disable_fog, int game_loop)
-{ xvalue pay={ali_msg_type};
+{ ssvalue_t pay={ssclass_kRECORD};
   AddBoolValue(&pay,  /* tag */ 1, disable_fog);
   // AddVarint32Value(&pay,/* tag */ 2, game_loop);
   return AlistarSendPayload(ctx,10,&pay);
 }
 // Parsing functions
 ALISTAR_PARSE_FUNCTION void
-ParseResponseQueryPathing(xstate *read, ResponseQueryPathing *val)
+ParseResponseQueryPathing(ssread_t *read, ResponseQueryPathing *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: GetFloat32Value(read,&val->distance); break;
@@ -626,14 +626,14 @@ ParseResponseQueryPathing(xstate *read, ResponseQueryPathing *val)
 }
 // Parsing functions
 ALISTAR_PARSE_FUNCTION void
-ParseResponseQueryBuildingPlacement(xstate *read, ResponseQueryBuildingPlacement *val)
+ParseResponseQueryBuildingPlacement(ssread_t *read, ResponseQueryBuildingPlacement *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: GetEnumValue(read,&val->result); break;
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParseResponseQuery(xstate *read, ResponseQuery *val)
+ParseResponseQuery(ssread_t *read, ResponseQuery *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: ParseResponseQueryPathing(read,AliArrayAdd(read,val->pathing)); break;
@@ -642,7 +642,7 @@ ParseResponseQuery(xstate *read, ResponseQuery *val)
 }
 // Mainly for debugging reasons
 ALISTAR_PARSE_FUNCTION void
-ParseActionChat(xstate *read, ActionChat *val)
+ParseActionChat(ssread_t *read, ActionChat *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: GetEnumValue(read,&val->channel);   break;
@@ -650,7 +650,7 @@ ParseActionChat(xstate *read, ActionChat *val)
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParseActionRawUnitCommand(xstate *read, ActionRawUnitCommand *val)
+ParseActionRawUnitCommand(ssread_t *read, ActionRawUnitCommand *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: GetVarintValue(read, &val->ability_id);             break;
@@ -661,14 +661,14 @@ ParseActionRawUnitCommand(xstate *read, ActionRawUnitCommand *val)
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParseActionRaw(xstate *read, ActionRaw *val)
+ParseActionRaw(ssread_t *read, ActionRaw *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: ParseActionRawUnitCommand(read, &val->unit_command); break;
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParseAction(xstate *read, Action *val)
+ParseAction(ssread_t *read, Action *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: ParseActionRaw(read, &val->action_raw); break;
@@ -680,14 +680,14 @@ ParseAction(xstate *read, Action *val)
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParseRequestAction(xstate *read, RequestAction *val)
+ParseRequestAction(ssread_t *read, RequestAction *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: ParseAction(read,AliArrayAdd(read,val->actions)); break;
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParseRequest(xstate *read, Request *val)
+ParseRequest(ssread_t *read, Request *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 11: ParseRequestAction(read,&val->action); break;
@@ -695,7 +695,7 @@ ParseRequest(xstate *read, Request *val)
 }
 // Player
 ALISTAR_PARSE_FUNCTION void
-ParsePlayerInfo(xstate *read, PlayerInfo *val)
+ParsePlayerInfo(ssread_t *read, PlayerInfo *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: GetVarintValue(read,&val->iden);   break;
@@ -708,7 +708,7 @@ ParsePlayerInfo(xstate *read, PlayerInfo *val)
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParseResponseCreateGame(xstate *read, ResponseCreateGame *val)
+ParseResponseCreateGame(ssread_t *read, ResponseCreateGame *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: GetEnumValue(read,&val->errbit);   break;
@@ -716,7 +716,7 @@ ParseResponseCreateGame(xstate *read, ResponseCreateGame *val)
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParseResponseJoinGame(xstate *read, ResponseJoinGame *val)
+ParseResponseJoinGame(ssread_t *read, ResponseJoinGame *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: GetVarintValue(read,&val->player); break;
@@ -725,7 +725,7 @@ ParseResponseJoinGame(xstate *read, ResponseJoinGame *val)
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParsePlayerCommon(xstate *read, PlayerCommon *val)
+ParsePlayerCommon(ssread_t *read, PlayerCommon *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1:  GetVarintValue(read,&val->player_id);        break;
@@ -742,7 +742,7 @@ ParsePlayerCommon(xstate *read, PlayerCommon *val)
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParseStartRaw(xstate *read, StartRaw *val)
+ParseStartRaw(ssread_t *read, StartRaw *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: ParseSize2DI(read,    &val->map_size);               break;
@@ -754,7 +754,7 @@ ParseStartRaw(xstate *read, StartRaw *val)
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParseResponseGameInfo(xstate *read, ResponseGameInfo *val)
+ParseResponseGameInfo(ssread_t *read, ResponseGameInfo *val)
 { MapName *map;
   ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
@@ -778,7 +778,7 @@ ParseResponseGameInfo(xstate *read, ResponseGameInfo *val)
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParseResponseAvailableMaps(xstate *read, ResponseAvailableMaps *val)
+ParseResponseAvailableMaps(ssread_t *read, ResponseAvailableMaps *val)
 { MapName *map;
   ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
@@ -797,7 +797,7 @@ ParseResponseAvailableMaps(xstate *read, ResponseAvailableMaps *val)
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParseErrorAction(xstate *read, ErrorAction *val)
+ParseErrorAction(ssread_t *read, ErrorAction *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: GetVarint64Value(read,&val->unit_tag);   break;
@@ -806,7 +806,7 @@ ParseErrorAction(xstate *read, ErrorAction *val)
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParseChatReceived(xstate *read, ChatReceived *val)
+ParseChatReceived(ssread_t *read, ChatReceived *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: GetVarintValue(read,&val->player_id); break;
@@ -814,7 +814,7 @@ ParseChatReceived(xstate *read, ChatReceived *val)
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParseUnitOrder(xstate *read, UnitOrder *val)
+ParseUnitOrder(ssread_t *read, UnitOrder *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: GetVarintValue(read,&val->ability_id); break;
@@ -824,7 +824,7 @@ ParseUnitOrder(xstate *read, UnitOrder *val)
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParseUnit(xstate *read, Unit *val)
+ParseUnit(ssread_t *read, Unit *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 7:  GetFloat32Value(read,&val->facing); break;
@@ -874,7 +874,7 @@ ParseUnit(xstate *read, Unit *val)
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParsePlayerResult(xstate *read, PlayerResult *val)
+ParsePlayerResult(ssread_t *read, PlayerResult *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: GetVarintValue(read,&val->player_id); break;
@@ -882,7 +882,7 @@ ParsePlayerResult(xstate *read, PlayerResult *val)
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParseMapState(xstate *read, MapState *val)
+ParseMapState(ssread_t *read, MapState *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: ParseImageData(read,&val->visibility); break;
@@ -890,7 +890,7 @@ ParseMapState(xstate *read, MapState *val)
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParseObservationRaw(xstate *read, ObservationRaw *val)
+ParseObservationRaw(ssread_t *read, ObservationRaw *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 3: ParseMapState(read,&val->map_state);  break;
@@ -907,7 +907,7 @@ typedef struct Observation
   AliObservationRender       RenderData;
 } Observation;
 ALISTAR_PARSE_FUNCTION void
-ParseObservation(xstate *read, Observation *val)
+ParseObservation(ssread_t *read, Observation *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 9:  GetVarintValue(read,&val->GameLoop);                          break;
@@ -926,7 +926,7 @@ typedef struct ResponseObservation
   ChatReceived *chats; // array
 } ResponseObservation;
 ALISTAR_PARSE_FUNCTION void
-ParseResponseObservation(xstate *read, ResponseObservation *val)
+ParseResponseObservation(ssread_t *read, ResponseObservation *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1: ParseAction(read,AliArrayAdd(read,val->actions));             break;
@@ -940,7 +940,7 @@ ParseResponseObservation(xstate *read, ResponseObservation *val)
   }
 }
 ALISTAR_PARSE_FUNCTION void
-ParseResponseAction(xstate *read, ResponseAction *val)
+ParseResponseAction(ssread_t *read, ResponseAction *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1:
@@ -973,7 +973,7 @@ union
   char           *  Error;
 } Response, ali_response;
 ALISTAR_PARSE_FUNCTION void
-ParseResponse(xstate *read, Response *info)
+ParseResponse(ssread_t *read, Response *info)
 { ZeroMemory(info,sizeof(*info));
   ForMessageField(read)
   { case 99: GetEnumValue(read,&info->Status);  break;
@@ -1109,35 +1109,35 @@ typedef struct AlistarContext
 static int
 AlistarRequestTrainSCV(AlistarContext *ctx, uint64_t unit_tag)
 {
-  xvalue raw_unit_command={ali_msg_type};
+  ssvalue_t raw_unit_command={ssclass_kRECORD};
   AddVarint32Value(&raw_unit_command,/* tag */ 1, 524);
   AddVarint64Value(&raw_unit_command,/* tag */ 4, unit_tag);
 
-  xvalue action_raw={ali_msg_type};
+  ssvalue_t action_raw={ssclass_kRECORD};
   AddValue(&action_raw,/* tag */1,raw_unit_command);
 
-  xvalue action={ali_msg_type};
+  ssvalue_t action={ssclass_kRECORD};
   AddValue(&action,/* tag */1,action_raw);
 
-  xvalue request_action={ali_msg_type};
+  ssvalue_t request_action={ssclass_kRECORD};
   AddValue(&request_action,/* tag */1,action);
 
   return AlistarSendPayload(ctx,11,&request_action);
 }
 static int
 AlistarRequestBuildDepot(AlistarContext *ctx, uint64_t unit_tag, Point2D location)
-{ xvalue raw_unit_command={ali_msg_type};
+{ ssvalue_t raw_unit_command={ssclass_kRECORD};
   AddVarint32Value(&raw_unit_command,1,319);
   AddVarint64Value(&raw_unit_command,4,unit_tag);
   AddValue(&raw_unit_command,2,ValuePoint2D(location));
 
-  xvalue action_raw={ali_msg_type};
+  ssvalue_t action_raw={ssclass_kRECORD};
   AddValue(&action_raw,1,raw_unit_command);
 
-  xvalue action={ali_msg_type};
+  ssvalue_t action={ssclass_kRECORD};
   AddValue(&action,1,action_raw);
 
-  xvalue request_action={ali_msg_type};
+  ssvalue_t request_action={ssclass_kRECORD};
   AddValue(&request_action,1,action);
 
   return AlistarSendPayload(ctx,11,&request_action);
@@ -1145,36 +1145,36 @@ AlistarRequestBuildDepot(AlistarContext *ctx, uint64_t unit_tag, Point2D locatio
 static int
 AlistarQueryDistanceToFromUnit(AlistarContext *ctx, Unit *unit, Point2D pos)
 {
-  xvalue req_query_pathing={ali_msg_type};
+  ssvalue_t req_query_pathing={ssclass_kRECORD};
   AddVarint64Value(&req_query_pathing,2,unit->tag);
   AddValue(&req_query_pathing,3,ValuePoint2D(pos));
 
-  xvalue req_query={ali_msg_type};
+  ssvalue_t req_query={ssclass_kRECORD};
   AddValue(&req_query,1,req_query_pathing);
   return AlistarSendPayload(ctx,14,&req_query);
 }
 static int
 AlistarQueryBuildingPlacement(AlistarContext *ctx, int32_t ability_id, Point2D location)
 {
-  xvalue req_query_building_placement={ali_msg_type};
+  ssvalue_t req_query_building_placement={ssclass_kRECORD};
   AddVarint32Value(&req_query_building_placement,1,ability_id);
   AddValue(&req_query_building_placement,2,ValuePoint2D(location));
 
-  xvalue req_query={ali_msg_type};
+  ssvalue_t req_query={ssclass_kRECORD};
   AddValue(&req_query,3,req_query_building_placement);
   return AlistarSendPayload(ctx,14,&req_query);
 }
 static int
 AlistarSendChat(AlistarContext *ctx, int32_t channel, const char *message)
 {
-  xvalue action_chat={ali_msg_type};
+  ssvalue_t action_chat={ssclass_kRECORD};
   AddEnumValue(&action_chat,/* tag */1,channel);
   AddStringValue(&action_chat,/* tag */2,message);
 
-  xvalue action={ali_msg_type};
+  ssvalue_t action={ssclass_kRECORD};
   AddValue(&action,/* tag */6,action_chat);
 
-  xvalue request_action={ali_msg_type};
+  ssvalue_t request_action={ssclass_kRECORD};
   AddValue(&request_action,/* tag */1,action);
 
   return AlistarSendPayload(ctx,11,&request_action);
