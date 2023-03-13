@@ -1,10 +1,76 @@
 /*
-** Copyright(C) J. Dayan Rodriguez, 2022, All rights reserved.
 **
-** Alistar
+** -+- AliStar -+-
+**
+** Copyright(C) Dayan Rodriguez, 2022, All rights reserved.
 */
-#ifndef ALISTAR_HEADER
-#define ALISTAR_HEADER
+#ifndef ALISTAR_H
+#define ALISTAR_H
+
+#define MG_EXPERIMENTAL_INTERFACES
+#define USE_WEBSOCKET
+#define OPENSSL_API_1_0
+#include "civetweb.h"
+#include "civetweb.c"
+
+typedef struct mg_callbacks mg_callbacks;
+typedef struct mg_context mg_context;
+typedef struct mg_connection mg_connection;
+
+typedef void *mutex_t;
+
+mutex_t  create_mutex();
+   void acquire_mutex(mutex_t);
+   void release_mutex(mutex_t);
+
+typedef struct thread_message_t thread_message_t;
+typedef struct thread_message_t
+{ int    type;
+  void * value;
+} thread_message_t;
+
+typedef struct thread_t thread_t;
+typedef struct thread_t
+{ thread_message_t * array;
+  int                count;
+           mutex_t   mutex;
+  void             * memory;
+} thread_t;
+void  push_thread_message(thread_t *, int, void *);
+void *poll_thread_message(thread_t *, int,  int  );
+
+typedef struct pipe_t pipe_t;
+typedef struct pipe_t
+{ void *read;
+  void *write;
+} pipe_t;
+pipe_t create_system_pipe(int, int);
+
+typedef struct process_t process_t;
+typedef struct process_t
+{ void         * ProcessHandle;
+  void         * ThreadHandle;
+  unsigned int   ThreadId;
+  unsigned int   ProcessId;
+  pipe_t Input;
+  pipe_t Output;
+  pipe_t Error;
+} process_t;
+int    launch_system_process(process_t *, const char *, const char *, const char *);
+int launch_starcraft_process(process_t *, const char *, int, const char *, int);
+
+typedef struct context_t context_t;
+typedef struct context_t
+{ mg_connection *conn;
+  thread_t       thread;
+} context_t;
+
+void *                     send_payload(context_t *, int, ssvalue_t);
+void *           request_available_maps(context_t *, int);
+void *              request_create_game(context_t *, int);
+void * request_join_game_as_participant(context_t *, int, int, const char *);
+void *                request_game_info(context_t *, int);
+void *              request_observation(context_t *, int, int, int);
 
 
 #define ALISTAR_EXPAND_(A) A
@@ -16,17 +82,6 @@
 #define ALISTAR_STRING_CONCAT(A,B) ALISTAR_STRING_CONCAT_(A,B)
 
 #define ALISTAR_PARSE_FUNCTION static
-
-
-// Note: you must define this function for your own backend
-static int
-AlistarSendRequest(struct AlistarContext *, ssvalue_t *);
-
-
-// Note: these are functions used by the api
-static int
-AlistarSendPayload(struct AlistarContext *, int tag, ssvalue_t *);
-
 
 // Todo: make enums
 #define NORACE  0
@@ -106,90 +161,53 @@ AlistarSendPayload(struct AlistarContext *, int tag, ssvalue_t *);
 #define SELECT_ALL_TYPE     3 // Equivalent to control+click. Selects all units of a given type.
 #define SELECT_ADD_ALL_TYPE 4 // Equivalent to shift+control+click. Selects all units of a given type.
 
-
-// Note: common types, these come from zen:: in my case ...
-typedef i32x2 Point2DI, Size2DI;
-typedef f32x2 Point2D;
-typedef f32x3 Point3D;
-typedef i32x4 RectangleI;
-
-ALISTAR_PARSE_FUNCTION void
-ParsePoint2DI(ssread_t *read, Point2DI *val)
-{ ZeroMemory(val,sizeof(*val));
-  ForMessageField(read)
-  { case 1: GetSignedVarint32Value(read,&val->x); break;// TODO(RJ):
-    case 2: GetSignedVarint32Value(read,&val->y); break;// TODO(RJ):
-  }
-}
-ALISTAR_PARSE_FUNCTION void
-ParsePoint2D(ssread_t *read, Point2D *val)
-{ ZeroMemory(val,sizeof(*val));
-  ForMessageField(read)
-  { case 1: GetFloat32Value(read,&val->x); break;
-    case 2: GetFloat32Value(read,&val->y); break;
-  }
-}
-ALISTAR_PARSE_FUNCTION void
-ParsePoint3D(ssread_t *read, Point3D *val)
-{ ZeroMemory(val,sizeof(*val));
-  ForMessageField(read)
-  { case 1: GetFloat32Value(read,&val->x); break;// TODO(RJ):
-    case 2: GetFloat32Value(read,&val->y); break;// TODO(RJ):
-    case 3: GetFloat32Value(read,&val->z); break;// TODO(RJ):
-  }
-}
-ALISTAR_PARSE_FUNCTION void
-ParseSize2DI(ssread_t *read, Size2DI *val)
-{ return ParsePoint2DI(read,val);
-}
-ALISTAR_PARSE_FUNCTION void
-ParseRectangleI(ssread_t *read, RectangleI *val)
-{ ZeroMemory(val,sizeof(*val));
-  ForMessageField(read)
-  { case 1: ParsePoint2DI(read,&val->min); break;
-    case 2: ParsePoint2DI(read,&val->max); break;
-  }
-}
 typedef struct ImageData
-{ unsigned int   bits_per_pixel;
-  Size2DI        size;
-  unsigned char *bytes;
+{ unsigned int    bits_per_pixel;
+  ssi32x2_t       size;
+  unsigned char * bytes;
 } ImageData;
+
+
+void ssread_i32x2(ssread_t *read, ssi32x2_t *val)
+{ ZeroMemory(val,sizeof(*val));
+  ForMessageField(read)
+  { case 1: ssread_svar32(read,&val->x); break;
+    case 2: ssread_svar32(read,&val->y); break;
+  }
+}
+
+void ssread_i32x3(ssread_t *read, ssr32x3_t *val)
+{ ZeroMemory(val,sizeof(*val));
+  ForMessageField(read)
+  { case 1: ssread_real32(read,&val->x); break;
+    case 2: ssread_real32(read,&val->y); break;
+    case 3: ssread_real32(read,&val->z); break;
+  }
+}
+
+void ssread_f32x2(ssread_t *read, ssr32x2_t *val)
+{ ZeroMemory(val,sizeof(*val));
+  ForMessageField(read)
+  { case 1: ssread_real32(read,&val->x); break;
+    case 2: ssread_real32(read,&val->y); break;
+  }
+}
+
+void ssread_i32x4(ssread_t *read, ssi32x4_t *val)
+{ ZeroMemory(val,sizeof(*val));
+  ForMessageField(read)
+  { case 1: ssread_i32x2(read,&val->min); break;
+    case 2: ssread_i32x2(read,&val->max); break;
+  }
+}
+
 ALISTAR_PARSE_FUNCTION void
 ParseImageData(ssread_t *read, ImageData *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: GetVarintValue(read,&val->bits_per_pixel); break;
-    case 2: ParseSize2DI(read,  &val->size);           break;
-    case 3: GetBytesValue(read, &val->bytes);    break;
-  }
-}
-
-// Note: experimenting with this sort of stuff ...
-#define ALI_TYPE_FEATURE_LAYERS
-#include "ali-typemaker.inl"
-#undef ALI_TYPE_FEATURE_LAYERS
-
-#define ALI_TYPE_FEATURE_LAYERS_MINIMAP
-#include "ali-typemaker.inl"
-#undef ALI_TYPE_FEATURE_LAYERS_MINIMAP
-
-#define ALI_TYPE_OBSERVATION_RENDER
-#include "ali-typemaker.inl"
-#undef ALI_TYPE_OBSERVATION_RENDER
-
-
-typedef struct ObservationFeatureLayer
-{ AliFeatureLayers Renders;
-  AliFeatureLayersMinimap MinimapRenders;
-} ObservationFeatureLayer;
-
-ALISTAR_PARSE_FUNCTION void
-AliParseObservationFeatureLayer(ssread_t *read, ObservationFeatureLayer *val)
-{ ZeroMemory(val,sizeof(*val));
-  ForMessageField(read)
-  { case 1: AliParseFeatureLayers(read,&val->Renders);                break;
-    case 2: AliParseFeatureLayersMinimap(read,&val->MinimapRenders);  break;
+  { case 1: ssread_uvar32(read,&val->bits_per_pixel); break;
+    case 2: ssread_i32x2(read,  &val->size); break;
+    case 3: ssread_bytes(read, &val->bytes); break;
   }
 }
 // Action Types ...
@@ -228,7 +246,7 @@ typedef enum ActionResult
 typedef struct ActionRawUnitCommand
 { int32_t    ability_id;
   union
-  { Point2D  target_world_space_pos; // worldspace
+  { ssr32x2_t  target_world_space_pos; // worldspace
     uint64_t target_unit_tag;
   };
   uint64_t  *unit_tags;
@@ -236,7 +254,7 @@ typedef struct ActionRawUnitCommand
   int        queue_command;
 } ActionRawUnitCommand;
 typedef struct ActionRawCameraMove
-{  Point2D loca; // center, worldspace
+{  ssr32x2_t loca; // center, worldspace
 } ActionRawCameraMove;
 typedef struct ActionRawToggleAutocast
 { int32_t   ability_id;
@@ -252,19 +270,19 @@ typedef struct ActionRaw
 } ActionRaw;
 typedef struct ActionSpatialUnitCommand
 { unsigned int ability_id;
-  Point2DI       coord; // screen or minimap space
+  ssi32x2_t       coord; // screen or minimap space
   unsigned     is_minimap_coord: 1;
   unsigned     is_queue_command: 1;
 } ActionSpatialUnitCommand;
 typedef struct ActionSpatialCameraMove
-{ Point2DI       minimap;
+{ ssi32x2_t       minimap;
 } ActionSpatialCameraMove;
 typedef struct ActionSpatialUnitSelectionPoint
-{ Point2DI screen;
+{ ssi32x2_t screen;
   int    select;
 } ActionSpatialUnitSelectionPoint;
 typedef struct ActionSpatialUnitSelectionRect
-{ RectangleI   screen[0x10];
+{ ssi32x4_t   screen[0x10];
   unsigned int length;
   unsigned int is_add: 1; // shift+drag
 } ActionSpatialUnitSelectionRect;
@@ -349,7 +367,7 @@ typedef struct UnitOrder
 { uint32_t ability_id;               // optional:1
   union
   { uint64_t target_unit_tag;        // optional:3
-    Point3D  target_world_space_pos; // optional:2
+    ssr32x3_t  target_world_space_pos; // optional:2
   };
   float    progress;                 // optional:4
   unsigned is_unit_tag: 1;           // conditional:[3,2] if 3
@@ -384,7 +402,7 @@ typedef struct PassengerUnit
   uint32_t   unit_type;   // 6
 } PassengerUnit;
 typedef struct RallyTarget
-{ Point2D   point; // 1   Will always be filled.
+{ ssr32x2_t   point; // 1   Will always be filled.
   uint64_t  tag;   // 2   Only if it's targeting a unit.
 } RallyTarget;
 typedef struct Unit
@@ -434,31 +452,23 @@ typedef struct Unit
   DisplayType      display_type;   // optional:1
   Alliance         alliance;       // optional:2
 
-  Point3D          pos;            // optional:6
+  ssr32x3_t          pos;            // optional:6
 
   uint32_t       * buff_ids;       // optional:27
   UnitOrder      * orders;         // repeated:22 (not populated for enemies)
   PassengerUnit  * passengers;     // repeated:24 (not populated for enemies)
   RallyTarget    * rally_targets;  // repeated:45 (not populated for enemies)
 } Unit;
-typedef struct ObservationRaw
-{ // PlayerRaw player;  // optional:1;
-  Unit     *units;      // repeated:2;
-  MapState  map_state;  // optional:3; Fog of war, creep and so on. Board stuff that changes per frame.
-  // Event event;       // optional:4;
-  // Effect effects;    // repeated:5;
-  // RadarRing radar;   // repeated:6;
-} ObservationRaw;
 typedef struct ResponseAction
 { ActionResult *results; // array
 } ResponseAction;
 typedef struct StartRaw
-{ Size2DI     map_size;
+{ ssi32x2_t     map_size;
   ImageData   pathing_grid;
   ImageData   terrain_height;
   ImageData   placement_grid;
-  RectangleI  playable_area;
-  Point2D    *start_locations;
+  ssi32x4_t  playable_area;
+  ssr32x2_t    *start_locations;
 } StartRaw;
 typedef struct ResponseGameInfo
 { MapName      *maps;
@@ -496,132 +506,18 @@ typedef struct ResponseQuery
 { ResponseQueryPathing           *pathing;    // repeated:1;
   ResponseQueryBuildingPlacement *placements; // repeated:3;
 } ResponseQuery;
-static int
-RequestObservation(AlistarContext *ctx, int disable_fog, int game_loop);
-static i32
-RequestGameInfo(AlistarContext *ctx);
-static i32
-RequestAvailableMaps(AlistarContext *ctx);
-static i32
-RequestCreateGame(AlistarContext *ctx);
-static i32
-RequestJoinGameAsParticipant(AlistarContext *ctx, int race, const char *name);
+
 
 static const wchar_t *
 AlistarActionResultW(ActionResult result);
 
-static ssvalue_t
-CreateParticipantPlayerSetup(const char *name)
-{ ssvalue_t req={ssclass_kRECORD};
-  AddVarint32Value(&req,/*tag: */1, /*value: */ PARTICIPANT);
-  AddStringValue(&req,/*tag: */4, /*value: */ name);
-  return req;
-}
-static ssvalue_t
-CreateComputerPlayerSetup(int race, int diff, int build, const char *name)
-{ // Computer=2
-  ssvalue_t req={ssclass_kRECORD};
-  AddVarint32Value(&req, /*tag*/1, COMPUTER );
-  AddEnumValue(&req,   /*tag*/2,     race );
-  AddEnumValue(&req,   /*tag*/3,     diff );
-  AddStringValue(&req, /*tag*/4,     name );
-  AddEnumValue(&req,   /*tag*/5,    build );
-  return req;
-}
-static ssvalue_t
-ValuePoint2D(Point2D val)
-{ ssvalue_t res={ssclass_kRECORD};
-  AddFloat32Value(&res,1,val.x);
-  AddFloat32Value(&res,2,val.y);
-  return res;
-}
-static ssvalue_t
-ValueSize2DI(Size2DI val)
-{ ssvalue_t res={ssclass_kRECORD};
-  AddVarint32Value(&res,1,val.x);
-  AddVarint32Value(&res,2,val.y);
-  return res;
-}
-static ssvalue_t
-AliCameraSetupValueNoMinimap(
-  Size2DI resolution,
-  float   width,
-  int     crop_to_playable_area,
-  int     allow_cheating_layers )
-{
-  ssvalue_t req={ssclass_kRECORD};
-  AddValue(&req,2,ValueSize2DI(resolution));
-  AddFloat32Value(&req,1,width);
-  AddBoolValue(&req,4,crop_to_playable_area);
-  AddBoolValue(&req,8,allow_cheating_layers);
-  return req;
-}
-static ssvalue_t
-AliCameraSetupValue(
-  Size2DI resolution,
-  Size2DI minimap_resolution,
-  float   width,
-  int     crop_to_playable_area,
-  int     allow_cheating_layers )
-{
-  ssvalue_t req={ssclass_kRECORD};
-  AddValue(&req,2,ValueSize2DI(resolution));
-  AddValue(&req,3,ValueSize2DI(minimap_resolution));
-  AddFloat32Value(&req,1,width);
-  AddBoolValue(&req,4,crop_to_playable_area);
-  AddBoolValue(&req,8,allow_cheating_layers);
-  return req;
-}
-static ssvalue_t
-CreateDefaultInterfaceOptions()
-{ ssvalue_t req={ssclass_kRECORD};
-  AddBoolValue(&req,1,TRUE);
-  AddBoolValue(&req,8,TRUE);
-  // AddValue(&req,4,AliCameraSetupValueNoMinimap({512,512},8.f,FALSE,TRUE));
-  AddValue(&req,3,AliCameraSetupValue({255,255},{256,256},256.f,FALSE,TRUE));
-  AddValue(&req,4,AliCameraSetupValue({512,512},{256,256},256.f,FALSE,TRUE));
-  return req;
-}
-static i32
-RequestGameInfo(AlistarContext *ctx)
-{ ssvalue_t pay={ssclass_kRECORD};
-  return AlistarSendPayload(ctx,9,&pay);
-}
-static i32
-RequestAvailableMaps(AlistarContext *ctx)
-{ ssvalue_t pay={ssclass_kRECORD};
-  return AlistarSendPayload(ctx,17,&pay);
-}
-static i32
-RequestCreateGame(AlistarContext *ctx)
-{ ssvalue_t pay={ssclass_kRECORD};
-  AddStringValue(&pay, /*tag*/2, "16-Bit LE"); // Battlenet map name
-  AddBoolValue(&pay,   /*tag*/6, true);       // Realtime?
-  AddValue(&pay,       /*tag*/3, CreateParticipantPlayerSetup(/*name*/"RoyJacobs"));
-  AddValue(&pay,       /*tag*/3, CreateComputerPlayerSetup(ZERG,7,5, /*name*/ "DakotaBrown"));
-  return AlistarSendPayload(ctx,1,&pay);
-}
-static i32
-RequestJoinGameAsParticipant(AlistarContext *ctx, int race, const char *name)
-{ ssvalue_t pay={ssclass_kRECORD};
-  AddEnumValue(&pay,  /* tag */ 1, race);
-  AddStringValue(&pay,/* tag */ 7, name);
-  AddValue(&pay,      /* tag */ 3, CreateDefaultInterfaceOptions()); // 3:Options
-  return AlistarSendPayload(ctx,2,&pay);
-}
-static int
-RequestObservation(AlistarContext *ctx, int disable_fog, int game_loop)
-{ ssvalue_t pay={ssclass_kRECORD};
-  AddBoolValue(&pay,  /* tag */ 1, disable_fog);
-  // AddVarint32Value(&pay,/* tag */ 2, game_loop);
-  return AlistarSendPayload(ctx,10,&pay);
-}
+
 // Parsing functions
 ALISTAR_PARSE_FUNCTION void
 ParseResponseQueryPathing(ssread_t *read, ResponseQueryPathing *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: GetFloat32Value(read,&val->distance); break;
+  { case 1: ssread_real32(read,&val->distance); break;
   }
 }
 // Parsing functions
@@ -629,15 +525,15 @@ ALISTAR_PARSE_FUNCTION void
 ParseResponseQueryBuildingPlacement(ssread_t *read, ResponseQueryBuildingPlacement *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: GetEnumValue(read,&val->result); break;
+  { case 1: ssread_enumerator(read,&val->result); break;
   }
 }
 ALISTAR_PARSE_FUNCTION void
 ParseResponseQuery(ssread_t *read, ResponseQuery *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: ParseResponseQueryPathing(read,AliArrayAdd(read,val->pathing)); break;
-    case 3: ParseResponseQueryBuildingPlacement(read,AliArrayAdd(read,val->placements)); break;
+  { case 1: ParseResponseQueryPathing(read,ccarradd(val->pathing,1)); break;
+    case 3: ParseResponseQueryBuildingPlacement(read,ccarradd(val->placements,1)); break;
   }
 }
 // Mainly for debugging reasons
@@ -645,19 +541,19 @@ ALISTAR_PARSE_FUNCTION void
 ParseActionChat(ssread_t *read, ActionChat *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: GetEnumValue(read,&val->channel);   break;
-    case 2: GetStringValue(read,&val->message); break;
+  { case 1: ssread_enumerator(read,&val->channel);   break;
+    case 2: ssread_string(read,&val->message); break;
   }
 }
 ALISTAR_PARSE_FUNCTION void
 ParseActionRawUnitCommand(ssread_t *read, ActionRawUnitCommand *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: GetVarintValue(read, &val->ability_id);             break;
-    case 2: ParsePoint2D(read, &val->target_world_space_pos);   break;
-    case 3: GetVarint64Value(read, &val->target_unit_tag);      break;
-    case 4: GetVarint64Value(read, AliArrayAdd(read,val->unit_tags));   break;
-    case 5: GetVarintValue(read, &val->queue_command);          break;
+  { case 1: ssread_svar32(read, &val->ability_id);             break;
+    case 2: ssread_f32x2(read, &val->target_world_space_pos);   break;
+    case 3: ssread_uvar64(read, &val->target_unit_tag);      break;
+    case 4: ssread_uvar64(read, ccarradd(val->unit_tags,1));   break;
+    case 5: ssread_svar32(read, &val->queue_command);          break;
   }
 }
 ALISTAR_PARSE_FUNCTION void
@@ -676,14 +572,14 @@ ParseAction(ssread_t *read, Action *val)
     // case 3:  ParseActionRender(read, &val->action_render); break;
     // case 4:  ParseActionUI(read, &val->action_ui); break;
     case 6: ParseActionChat(read, &val->action_chat); break;
-    case 7: GetVarintValue(read, &val->game_loop);    break;
+    case 7: ssread_uvar32(read, &val->game_loop);    break;
   }
 }
 ALISTAR_PARSE_FUNCTION void
 ParseRequestAction(ssread_t *read, RequestAction *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: ParseAction(read,AliArrayAdd(read,val->actions)); break;
+  { case 1: ParseAction(read,ccarradd(val->actions,1)); break;
   }
 }
 ALISTAR_PARSE_FUNCTION void
@@ -698,59 +594,59 @@ ALISTAR_PARSE_FUNCTION void
 ParsePlayerInfo(ssread_t *read, PlayerInfo *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: GetVarintValue(read,&val->iden);   break;
-    case 2: GetEnumValue(read,&val->type);     break;
-    case 3: GetEnumValue(read,&val->race_r);   break;
-    case 4: GetEnumValue(read,&val->race_a);   break;
-    case 5: GetEnumValue(read,&val->diff);     break;
-    case 7: GetEnumValue(read,&val->build);    break;
-    case 6: GetStringValue(read,&val->name);   break;
+  { case 1: ssread_uvar32(read,&val->iden);   break;
+    case 2: ssread_enumerator(read,&val->type);     break;
+    case 3: ssread_enumerator(read,&val->race_r);   break;
+    case 4: ssread_enumerator(read,&val->race_a);   break;
+    case 5: ssread_enumerator(read,&val->diff);     break;
+    case 7: ssread_enumerator(read,&val->build);    break;
+    case 6: ssread_string(read,&val->name);   break;
   }
 }
 ALISTAR_PARSE_FUNCTION void
 ParseResponseCreateGame(ssread_t *read, ResponseCreateGame *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: GetEnumValue(read,&val->errbit);   break;
-    case 2: GetStringValue(read,&val->errstr); break;
+  { case 1: ssread_enumerator(read,&val->errbit);   break;
+    case 2: ssread_string(read,&val->errstr); break;
   }
 }
 ALISTAR_PARSE_FUNCTION void
 ParseResponseJoinGame(ssread_t *read, ResponseJoinGame *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: GetVarintValue(read,&val->player); break;
-    case 2: GetEnumValue(read,&val->errbit);   break;
-    case 3: GetStringValue(read,&val->errstr); break;
+  { case 1: ssread_uvar32(read,&val->player); break;
+    case 2: ssread_enumerator(read,&val->errbit);   break;
+    case 3: ssread_string(read,&val->errstr); break;
   }
 }
 ALISTAR_PARSE_FUNCTION void
 ParsePlayerCommon(ssread_t *read, PlayerCommon *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1:  GetVarintValue(read,&val->player_id);        break;
-    case 2:  GetVarintValue(read,&val->minerals);         break;
-    case 3:  GetVarintValue(read,&val->vespene);          break;
-    case 4:  GetVarintValue(read,&val->food_cap);         break;
-    case 5:  GetVarintValue(read,&val->food_used);        break;
-    case 6:  GetVarintValue(read,&val->food_army);        break;
-    case 7:  GetVarintValue(read,&val->food_workers);     break;
-    case 8:  GetVarintValue(read,&val->idle_worker_count);break;
-    case 9:  GetVarintValue(read,&val->army_count);       break;
-    case 10: GetVarintValue(read,&val->warp_gate_count);  break;
-    case 11: GetVarintValue(read,&val->larva_count);      break;
+  { case 1:  ssread_uvar32(read,&val->player_id);        break;
+    case 2:  ssread_uvar32(read,&val->minerals);         break;
+    case 3:  ssread_uvar32(read,&val->vespene);          break;
+    case 4:  ssread_uvar32(read,&val->food_cap);         break;
+    case 5:  ssread_uvar32(read,&val->food_used);        break;
+    case 6:  ssread_uvar32(read,&val->food_army);        break;
+    case 7:  ssread_uvar32(read,&val->food_workers);     break;
+    case 8:  ssread_uvar32(read,&val->idle_worker_count);break;
+    case 9:  ssread_uvar32(read,&val->army_count);       break;
+    case 10: ssread_uvar32(read,&val->warp_gate_count);  break;
+    case 11: ssread_uvar32(read,&val->larva_count);      break;
   }
 }
 ALISTAR_PARSE_FUNCTION void
 ParseStartRaw(ssread_t *read, StartRaw *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: ParseSize2DI(read,    &val->map_size);               break;
+  { case 1: ssread_i32x2(read,    &val->map_size);               break;
     case 2: ParseImageData(read,  &val->pathing_grid);           break;
     case 3: ParseImageData(read,  &val->terrain_height);         break;
     case 4: ParseImageData(read,  &val->placement_grid);         break;
-    case 5: ParseRectangleI(read, &val->playable_area);          break;
-    case 6: ParsePoint2D(read, AliArrayAdd(read,val->start_locations)); break;
+    case 5: ssread_i32x4(read, &val->playable_area);          break;
+    case 6: ssread_f32x2(read, ccarradd(val->start_locations,1)); break;
   }
 }
 ALISTAR_PARSE_FUNCTION void
@@ -759,126 +655,81 @@ ParseResponseGameInfo(ssread_t *read, ResponseGameInfo *val)
   ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1:
-    { map=AliArrayAdd(read,val->maps);
+    { map=ccarradd(val->maps,1);
       map->is_local=0;
 
-      GetStringValue(read,&map->string);
+      ssread_string(read,&map->string);
     } break;
     break;
     case 2:
-    { map=AliArrayAdd(read,val->maps);
+    { map=ccarradd(val->maps,1);
       map->is_local=1;
 
-      GetStringValue(read,&map->string);
+      ssread_string(read,&map->string);
     } break;
     break;
-    case 3: ParsePlayerInfo(read,AliArrayAdd(read,val->players)); break;
+    case 3: ParsePlayerInfo(read,ccarradd(val->players,1)); break;
     case 4: ParseStartRaw(read,&val->start_raw);          break;
-    case 6: GetStringValue(read,AliArrayAdd(read,val->mods));     break;
+    case 6: ssread_string(read,ccarradd(val->mods,1));     break;
   }
 }
-ALISTAR_PARSE_FUNCTION void
-ParseResponseAvailableMaps(ssread_t *read, ResponseAvailableMaps *val)
-{ MapName *map;
-  ZeroMemory(val,sizeof(*val));
+
+void ParseResponseAvailableMaps(ssread_t *read, ResponseAvailableMaps *value)
+{
+  ZeroMemory(value,sizeof(*value));
+
   ForMessageField(read)
   { case 1:
-    { map=AliArrayAdd(read,val->maps);
+    { MapName *map=ccarradd(value->maps,1);
       map->is_local=1;
-
-      GetStringValue(read,&map->string);
+      ssread_string(read,&map->string);
     } break;
     case 2:
-    { map=AliArrayAdd(read,val->maps);
+    { MapName *map=ccarradd(value->maps,1);
       map->is_local=0;
-
-      GetStringValue(read,&map->string);
+      ssread_string(read,&map->string);
     } break;
   }
 }
+
 ALISTAR_PARSE_FUNCTION void
 ParseErrorAction(ssread_t *read, ErrorAction *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: GetVarint64Value(read,&val->unit_tag);   break;
-    case 2: GetVarint64Value(read,&val->ability_id); break;
-    case 3: GetEnumValue(read,&val->result);         break;
+  { case 1: ssread_uvar64(read,&val->unit_tag);   break;
+    case 2: ssread_uvar64(read,&val->ability_id); break;
+    case 3: ssread_enumerator(read,&val->result);         break;
   }
 }
 ALISTAR_PARSE_FUNCTION void
 ParseChatReceived(ssread_t *read, ChatReceived *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: GetVarintValue(read,&val->player_id); break;
-    case 2: GetStringValue(read,&val->message);   break;
+  { case 1: ssread_uvar32(read,&val->player_id); break;
+    case 2: ssread_string(read,&val->message);   break;
   }
 }
 ALISTAR_PARSE_FUNCTION void
 ParseUnitOrder(ssread_t *read, UnitOrder *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: GetVarintValue(read,&val->ability_id); break;
-    case 2: ParsePoint3D(read,&val->target_world_space_pos); break;
-    case 3: GetVarint64Value(read,&val->target_unit_tag); break;
-    case 4: GetFloat32Value(read,&val->progress); break;
+  { case 1: ssread_uvar32(read,&val->ability_id); break;
+    case 2: ssread_i32x3(read,&val->target_world_space_pos); break;
+    case 3: ssread_uvar64(read,&val->target_unit_tag); break;
+    case 4: ssread_real32(read,&val->progress); break;
   }
 }
 ALISTAR_PARSE_FUNCTION void
 ParseUnit(ssread_t *read, Unit *val)
 { ZeroMemory(val,sizeof(*val));
-  ForMessageField(read)
-  { case 7:  GetFloat32Value(read,&val->facing); break;
-    case 8:  GetFloat32Value(read,&val->radius); break;
-    case 9:  GetFloat32Value(read,&val->build_progress); break;
-    case 31: GetFloat32Value(read,&val->detect_range); break;
-    case 32: GetFloat32Value(read,&val->radar_range); break;
-    case 14: GetFloat32Value(read,&val->health); break;
-    case 15: GetFloat32Value(read,&val->health_max); break;
-    case 16: GetFloat32Value(read,&val->shield); break;
-    case 36: GetFloat32Value(read,&val->shield_max); break;
-    case 17: GetFloat32Value(read,&val->energy); break;
-    case 37: GetFloat32Value(read,&val->energy_max); break;
-    case 30: GetFloat32Value(read,&val->weapon_cooldown); break;
-    case 3:  GetVarint64Value(read,&val->tag); break;
-    case 23: GetVarint64Value(read,&val->add_on_tag); break;
-    case 34: GetVarint64Value(read,&val->engaged_target_tag); break;
-    case 4:  GetVarintValue(read,&val->unit_type); break;
-    case 40: GetVarintValue(read,&val->attack_upgrade_level); break;
-    case 41: GetVarintValue(read,&val->armor_upgrade_level); break;
-    case 42: GetVarintValue(read,&val->shield_upgrade_level); break;
-    case 18: GetVarintValue(read,&val->mineral_contents); break;
-    case 19: GetVarintValue(read,&val->vespene_contents); break;
-    case 25: GetVarintValue(read,&val->cargo_space_taken); break;
-    case 26: GetVarintValue(read,&val->cargo_space_max); break;
-    case 28: GetVarintValue(read,&val->assigned_harvesters); break;
-    case 29: GetVarintValue(read,&val->ideal_harvesters); break;
-    case 43: GetVarintValue(read,&val->buff_duration_remain); break;
-    case 44: GetVarintValue(read,&val->buff_duration_max); break;
-    case 5:  GetVarintValue(read,&val->owner); break;
-    case 20: GetVarintValue(read,&val->is_flying); break;
-    case 21: GetVarintValue(read,&val->is_burrowed); break;
-    case 38: GetVarintValue(read,&val->is_hallucination); break;
-    case 11: GetVarintValue(read,&val->is_selected); break;
-    case 12: GetVarintValue(read,&val->is_on_screen); break;
-    case 13: GetVarintValue(read,&val->is_blip); break;
-    case 35: GetVarintValue(read,&val->is_powered); break;
-    case 39: GetVarintValue(read,&val->is_active); break;
-    case 10: GetEnumValue(read,&val->cloak); break;
-    case 1:  GetEnumValue(read,&val->display_type); break;
-    case 2:  GetEnumValue(read,&val->alliance); break;
-    case 6:  ParsePoint3D(read,&val->pos); break;
-    case 27: GetVarintValue(read,AliArrayAdd(read,val->buff_ids)); break;
-    case 22: ParseUnitOrder(read,AliArrayAdd(read,val->orders)); break;
-    // case 24: PassengerUnit  * passengers;
-    // case 45: RallyTarget    * rally_targets;
-  }
+
 }
 ALISTAR_PARSE_FUNCTION void
 ParsePlayerResult(ssread_t *read, PlayerResult *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: GetVarintValue(read,&val->player_id); break;
-    case 2: GetEnumValue(read,&val->result); break;
+  { case 1: ssread_uvar32(read,&val->player_id); break;
+    case 2: ssread_enumerator(read,&val->result); break;
   }
 }
 ALISTAR_PARSE_FUNCTION void
@@ -889,75 +740,214 @@ ParseMapState(ssread_t *read, MapState *val)
     case 2: ParseImageData(read,&val->creep);      break;
   }
 }
-ALISTAR_PARSE_FUNCTION void
-ParseObservationRaw(ssread_t *read, ObservationRaw *val)
-{ ZeroMemory(val,sizeof(*val));
-  ForMessageField(read)
-  { case 3: ParseMapState(read,&val->map_state);  break;
-    case 2: ParseUnit(read,AliArrayAdd(read,val->units)); break;
-  }
-}
 
-typedef struct Observation
-{ uint32_t                   GameLoop;
-  PlayerCommon               PlayerCommon;
-  Alert                    * Alerts;
-  ObservationRaw             RawData;
-  ObservationFeatureLayer    FeatureLayerData;
-  AliObservationRender       RenderData;
-} Observation;
-ALISTAR_PARSE_FUNCTION void
-ParseObservation(ssread_t *read, Observation *val)
-{ ZeroMemory(val,sizeof(*val));
-  ForMessageField(read)
-  { case 9:  GetVarintValue(read,&val->GameLoop);                          break;
-    case 1:  ParsePlayerCommon(read,&val->PlayerCommon);                   break;
-    case 10: GetEnumValue(read,AliArrayAdd(read,val->Alerts));                     break;
-    case 5:  ParseObservationRaw(read,&val->RawData);                      break;
-    case 6:  AliParseObservationFeatureLayer(read,&val->FeatureLayerData); break;
-    case 7:  AliParseObservationRender(read,&val->RenderData);             break;
-  }
-}
 typedef struct ResponseObservation
 { Action       *actions; // array
   ErrorAction  *error_actions; // array
-  Observation   observation;
+
+  uint32_t      /*3.9     */  GameLoop;
+  PlayerCommon  /*3.1     */  PlayerCommon;
+  Alert         /*3.10    */ *Alerts;
+  Unit          /*3.5.2   */ *Units;
+  MapState      /*3.5.3   */  MapState;
+  ImageData     /*3.6.1. 1*/  HeightMap;
+  ImageData     /*3.6.1. 2*/  VisibilityMap;
+  ImageData     /*3.6.1. 3*/  Creep;
+  ImageData     /*3.6.1. 4*/  Power;
+  ImageData     /*3.6.1. 5*/  PlayerId;
+  ImageData     /*3.6.1. 6*/  UnitType;
+  ImageData     /*3.6.1. 7*/  Selected;
+  ImageData     /*3.6.1. 8*/  UnitHitPoints;
+  ImageData     /*3.6.1.17*/  UnitHitPointsRatio;
+  ImageData     /*3.6.1. 9*/  UnitEnergy;
+  ImageData     /*3.6.1.18*/  UnitEnergyRatio;
+  ImageData     /*3.6.1.10*/  UnitShields;
+  ImageData     /*3.6.1.19*/  UnitShieldsRatio;
+  ImageData     /*3.6.1.11*/  PlayerRelative;
+  ImageData     /*3.6.1.14*/  UnitDensityAA;
+  ImageData     /*3.6.1.15*/  UnitDensity;
+  ImageData     /*3.6.1.20*/  Effects;
+  ImageData     /*3.6.1.21*/  Hallucinations;
+  ImageData     /*3.6.1.22*/  Cloaked;
+  ImageData     /*3.6.1.23*/  Blip;
+  ImageData     /*3.6.1.24*/  Buffs;
+  ImageData     /*3.6.1.26*/  BuffDuration;
+  ImageData     /*3.6.1.25*/  Active;
+  ImageData     /*3.6.1.27*/  BuildProgress;
+  ImageData     /*3.6.1.28*/  Buildable;
+  ImageData     /*3.6.1.29*/  Pathable;
+  ImageData     /*3.6.1.30*/  Placeholder;
+  ImageData     /*3.6.2. 1*/  MiniMapHeightMap;
+  ImageData     /*3.6.2. 2*/  MiniMapVisibilityMap;
+  ImageData     /*3.6.2. 3*/  MiniMapCreep;
+  ImageData     /*3.6.2. 4*/  MiniMapCamera;
+  ImageData     /*3.6.2. 5*/  MiniMapPlayerId;
+  ImageData     /*3.6.2. 6*/  MiniMapPlayerRelative;
+  ImageData     /*3.6.2. 7*/  MiniMapSelected;
+  ImageData     /*3.6.2. 9*/  MiniMapAlerts;
+  ImageData     /*3.6.2.10*/  MiniMapBuildable;
+  ImageData     /*3.6.2.11*/  MiniMapPathable;
+  ImageData     /*3.6.2. 8*/  MiniMapUnitType;
+  ImageData     /*3.7.1   */  RenderMap;
+  ImageData     /*3.7.2   */  RenderMinimap;
+
+  // Observation   observation;
   PlayerResult *player_results; // array
   ChatReceived *chats; // array
 } ResponseObservation;
+
 ALISTAR_PARSE_FUNCTION void
 ParseResponseObservation(ssread_t *read, ResponseObservation *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
-  { case 1: ParseAction(read,AliArrayAdd(read,val->actions));             break;
-    case 2: ParseErrorAction(read,AliArrayAdd(read,val->error_actions));  break;
-    case 3: ParseObservation(read,&val->observation);             break;
-    case 4: ParsePlayerResult(read,AliArrayAdd(read,val->player_results));break;
-    case 5: ParseChatReceived(read,AliArrayAdd(read,val->chats));         break;
+  { case 1: ParseAction(read,ccarradd(val->actions,1));             break;
+    case 2: ParseErrorAction(read,ccarradd(val->error_actions,1));  break;
+    case 4: ParsePlayerResult(read,ccarradd(val->player_results,1));break;
+    case 5: ParseChatReceived(read,ccarradd(val->chats,1));         break;
+    case 3:
+    { ForMessageField(read)
+      { case 9:  ssread_uvar32(read,&val->GameLoop); break;
+        case 1:  ParsePlayerCommon(read,&val->PlayerCommon); break;
+        case 10: ssread_enumerator(read,ccarradd(val->Alerts,1)); break;
+        case 5:
+        { ForMessageField(read)
+          { case 3: ParseMapState(read,&val->MapState); break;
+            case 2:
+            { Unit *unit=ccarradd(val->Units,1);
+              ZeroMemory(unit,sizeof(*unit));
+
+              ForMessageField(read)
+              { case 7:  ssread_real32(read,&unit->facing); break;
+                case 8:  ssread_real32(read,&unit->radius); break;
+                case 9:  ssread_real32(read,&unit->build_progress); break;
+                case 31: ssread_real32(read,&unit->detect_range); break;
+                case 32: ssread_real32(read,&unit->radar_range); break;
+                case 14: ssread_real32(read,&unit->health); break;
+                case 15: ssread_real32(read,&unit->health_max); break;
+                case 16: ssread_real32(read,&unit->shield); break;
+                case 36: ssread_real32(read,&unit->shield_max); break;
+                case 17: ssread_real32(read,&unit->energy); break;
+                case 37: ssread_real32(read,&unit->energy_max); break;
+                case 30: ssread_real32(read,&unit->weapon_cooldown); break;
+                case 3:  ssread_uvar64(read,&unit->tag); break;
+                case 23: ssread_uvar64(read,&unit->add_on_tag); break;
+                case 34: ssread_uvar64(read,&unit->engaged_target_tag); break;
+                case 4:  ssread_uvar32(read,&unit->unit_type); break;
+                case 40: ssread_svar32(read,&unit->attack_upgrade_level); break;
+                case 41: ssread_svar32(read,&unit->armor_upgrade_level); break;
+                case 42: ssread_svar32(read,&unit->shield_upgrade_level); break;
+                case 18: ssread_svar32(read,&unit->mineral_contents); break;
+                case 19: ssread_svar32(read,&unit->vespene_contents); break;
+                case 25: ssread_svar32(read,&unit->cargo_space_taken); break;
+                case 26: ssread_svar32(read,&unit->cargo_space_max); break;
+                case 28: ssread_svar32(read,&unit->assigned_harvesters); break;
+                case 29: ssread_svar32(read,&unit->ideal_harvesters); break;
+                case 43: ssread_svar32(read,&unit->buff_duration_remain); break;
+                case 44: ssread_svar32(read,&unit->buff_duration_max); break;
+                case 5:  ssread_svar32(read,&unit->owner); break;
+                case 20: ssread_svar32(read,&unit->is_flying); break;
+                case 21: ssread_svar32(read,&unit->is_burrowed); break;
+                case 38: ssread_svar32(read,&unit->is_hallucination); break;
+                case 11: ssread_svar32(read,&unit->is_selected); break;
+                case 12: ssread_svar32(read,&unit->is_on_screen); break;
+                case 13: ssread_svar32(read,&unit->is_blip); break;
+                case 35: ssread_svar32(read,&unit->is_powered); break;
+                case 39: ssread_svar32(read,&unit->is_active); break;
+                case 10: ssread_enumerator(read,&unit->cloak); break;
+                case 1:  ssread_enumerator(read,&unit->display_type); break;
+                case 2:  ssread_enumerator(read,&unit->alliance); break;
+                case 6:  ssread_i32x3(read,&unit->pos); break;
+                case 27: ssread_uvar32(read,ccarradd(unit->buff_ids,1)); break;
+                case 22: ParseUnitOrder(read,ccarradd(unit->orders,1)); break;
+                // case 24: PassengerUnit  * passengers;
+                // case 45: RallyTarget    * rally_targets;
+              }
+            } break;
+          }
+        } break;
+        case 6:
+        { ForMessageField(read)
+          { case 1:
+            { ForMessageField(read)
+              { case 1:  ParseImageData(read,&val->HeightMap); break;
+                case 2:  ParseImageData(read,&val->VisibilityMap); break;
+                case 3:  ParseImageData(read,&val->Creep); break;
+                case 4:  ParseImageData(read,&val->Power); break;
+                case 5:  ParseImageData(read,&val->PlayerId); break;
+                case 6:  ParseImageData(read,&val->UnitType); break;
+                case 7:  ParseImageData(read,&val->Selected); break;
+                case 8:  ParseImageData(read,&val->UnitHitPoints); break;
+                case 17: ParseImageData(read,&val->UnitHitPointsRatio); break;
+                case 9:  ParseImageData(read,&val->UnitEnergy); break;
+                case 18: ParseImageData(read,&val->UnitEnergyRatio); break;
+                case 10: ParseImageData(read,&val->UnitShields); break;
+                case 19: ParseImageData(read,&val->UnitShieldsRatio); break;
+                case 11: ParseImageData(read,&val->PlayerRelative); break;
+                case 14: ParseImageData(read,&val->UnitDensityAA); break;
+                case 15: ParseImageData(read,&val->UnitDensity); break;
+                case 20: ParseImageData(read,&val->Effects); break;
+                case 21: ParseImageData(read,&val->Hallucinations); break;
+                case 22: ParseImageData(read,&val->Cloaked); break;
+                case 23: ParseImageData(read,&val->Blip); break;
+                case 24: ParseImageData(read,&val->Buffs); break;
+                case 26: ParseImageData(read,&val->BuffDuration); break;
+                case 25: ParseImageData(read,&val->Active); break;
+                case 27: ParseImageData(read,&val->BuildProgress); break;
+                case 28: ParseImageData(read,&val->Buildable); break;
+                case 29: ParseImageData(read,&val->Pathable); break;
+                case 30: ParseImageData(read,&val->Placeholder); break;
+              }
+            } break;
+            case 2:
+            { ForMessageField(read)
+              { case  1: ParseImageData(read,&val->MiniMapHeightMap); break;
+                case  2: ParseImageData(read,&val->MiniMapVisibilityMap); break;
+                case  3: ParseImageData(read,&val->MiniMapCreep); break;
+                case  4: ParseImageData(read,&val->MiniMapCamera); break;
+                case  5: ParseImageData(read,&val->MiniMapPlayerId); break;
+                case  6: ParseImageData(read,&val->MiniMapPlayerRelative); break;
+                case  7: ParseImageData(read,&val->MiniMapSelected); break;
+                case  9: ParseImageData(read,&val->MiniMapAlerts); break;
+                case 10: ParseImageData(read,&val->MiniMapBuildable); break;
+                case 11: ParseImageData(read,&val->MiniMapPathable); break;
+                case  8: ParseImageData(read,&val->MiniMapUnitType); break;
+              }
+            } break;
+          }
+        } break;
+        case 7:
+        { ForMessageField(read)
+          { case 1: ParseImageData(read,&val->RenderMap); break;
+            case 2: ParseImageData(read,&val->RenderMinimap); break;
+          }
+        } break;
+      }
+
+    } break;
     default:
-    { TRACE_W("unknown field: %i", GetTag(read));
+    { cctracewar("unknown field: %i", ssread_fieldname(read));
     } break;
   }
 }
-ALISTAR_PARSE_FUNCTION void
-ParseResponseAction(ssread_t *read, ResponseAction *val)
+
+void ParseResponseAction(ssread_t *read, ResponseAction *val)
 { ZeroMemory(val,sizeof(*val));
   ForMessageField(read)
   { case 1:
     {
       ActionResult *result;
-      result=AliArrayAdd(read,val->results);
+      result=ccarradd(val->results,1);
 
-      GetEnumValue(read,result);
+      ssread_enumerator(read,result);
 
-      TRACE_I("Action Result #%s", AlistarActionResultW(*result));
-
+      cctracelog("Action Result #%s", AlistarActionResultW(*result));
     } break;
   }
 }
-typedef struct Response
+
+typedef struct ssresponse_t ssresponse_t;
+typedef struct ssresponse_t
 {
-  Response *next;
 union
 { ResponseGameInfo      GameInfo;
   ResponseCreateGame    CreateGame;
@@ -971,14 +961,15 @@ union
   int               Type;
   unsigned int      Id;
   char           *  Error;
-} Response, ali_response;
+} ssresponse_t, ali_response;
+
 ALISTAR_PARSE_FUNCTION void
-ParseResponse(ssread_t *read, Response *info)
+ParseResponse(ssread_t *read, ssresponse_t *info)
 { ZeroMemory(info,sizeof(*info));
   ForMessageField(read)
-  { case 99: GetEnumValue(read,&info->Status);  break;
-    case 98: GetStringValue(read,&info->Error); break;
-    case 97: GetVarintValue(read,&info->Id);    break;
+  { case 99: ssread_enumerator(read,&info->Status);  break;
+    case 98: ssread_string(read,&info->Error); break;
+    case 97: ssread_uvar32(read,&info->Id);    break;
     case RESPONSE_TAG_CREATE_GAME:
     { ParseResponseCreateGame(read,&info->CreateGame);
       info->Type=RESPONSE_TAG_CREATE_GAME;
@@ -1008,177 +999,90 @@ ParseResponse(ssread_t *read, Response *info)
       info->Type=RESPONSE_TAG_QUERY;
     } break;
     default:
-    { TRACE_W("unknown response: %i", GetTag(read));
+    { cctracewar("unknown response: %i", ssread_fieldname(read));
     } break;
   }
 }
 
-#include "ali-thread.c"
 
-
-// Todo: please forgive me
-static const char *AliFieldStrings_Game[]=
-{
-#define ALI_TYPE_OBSERVATION_RENDER
-#define ALI_TYPEFIELD(TYPE,METHOD,TAG,NAME) ALISTAR_TO_STRING(NAME),
-#include "ali-types.inl"
-#undef ALI_TYPE_OBSERVATION_RENDER
-#define ALI_TYPE_FEATURE_LAYERS
-#define ALI_TYPEFIELD(TYPE,METHOD,TAG,NAME) ALISTAR_TO_STRING(NAME),
-#include "ali-types.inl"
-#undef ALI_TYPE_FEATURE_LAYERS
-};
-
-
-typedef struct AlistarContext
-{
-  ZenSystemProcess    proc;
-  mg_connection     * conn;
-  const char        * conn_addr;
-  int32_t             conn_port;
-
-  ali_thread          conn_queue;
-
-  ali_thread_message  tick_message;
-  int32_t             tick_ready;
-
-  int32_t             requested_obs;
-  int32_t             ready_for_obs;
-
-
-  struct
-  {
-    int32_t loop;
 #if 0
-    int32_t Supply;
-    AlistarUnitArray CommandCenters;
-    int32_t WorkersQueued;
-    AlistarUnitArray  SupplyDepots;
-    int32_t           SupplyDepotsQueued;
-    AlistarUnitArray Workers;
-    AlistarUnitArray WorkersIdling;
-    AlistarUnitArray WorkersHarvesting;
-    AlistarUnitArray WorkersBuilding;
-    AlistarUnitArray WorkersRepairing;
-    AlistarUnitArray Army;
-    int Minerals;
-    int Vespene;
-#endif
-
-
-
-  // Todo: please forgive me
-  union
-  { ZenTexture *Textures[0x20];
-    struct
-  { ZenTexture *TextureMap;                // 0
-    ZenTexture *TextureMinimap;            // 1
-    ZenTexture *TextureHeightMap;          // 2
-    ZenTexture *TextureVisibilityMap;      // 3
-    ZenTexture *TextureCreep;              // 4
-    ZenTexture *TexturePower;              // 5
-    ZenTexture *TexturePlayerId;           // 6
-    ZenTexture *TextureUnitType;           // 7
-    ZenTexture *TextureSelected;           // 8
-    ZenTexture *TextureUnitHitPoints;      // 9
-    ZenTexture *TextureUnitHitPointsRatio; // 10
-    ZenTexture *TextureUnitEnergy;         // 11
-    ZenTexture *TextureUnitEnergyRatio;    // 12
-    ZenTexture *TextureUnitShields;        // 13
-    ZenTexture *TextureUnitShieldsRatio;   // 14
-    ZenTexture *TexturePlayerRelative;     // 15
-    ZenTexture *TextureUnitDensityAA;      // 16
-    ZenTexture *TextureUnitDensity;        // 17
-    ZenTexture *TextureEffects;            // 18
-    ZenTexture *TextureHallucinations;     // 19
-    ZenTexture *TextureCloaked;            // 20
-    ZenTexture *TextureBlip;               // 21
-    ZenTexture *TextureBuffs;              // 22
-    ZenTexture *TextureBuffDuration;       // 23
-    ZenTexture *TextureActive;             // 24
-    ZenTexture *TextureBuildProgress;      // 25
-    ZenTexture *TextureBuildable;          // 26
-    ZenTexture *TexturePathable;           // 27
-    ZenTexture *TexturePlaceholder;        // 28
-  };
-  };
-
-  } Game;
-
-} AlistarContext;
+#if 0
 static int
-AlistarRequestTrainSCV(AlistarContext *ctx, uint64_t unit_tag)
+AlistarRequestTrainSCV(context_t *ctx, uint64_t unit_tag)
 {
-  ssvalue_t raw_unit_command={ssclass_kRECORD};
+  ssvalue_t raw_unit_command={sstype_kRECORD};
   AddVarint32Value(&raw_unit_command,/* tag */ 1, 524);
   AddVarint64Value(&raw_unit_command,/* tag */ 4, unit_tag);
 
-  ssvalue_t action_raw={ssclass_kRECORD};
-  AddValue(&action_raw,/* tag */1,raw_unit_command);
+  ssvalue_t action_raw={sstype_kRECORD};
+  ssvalue_member(&action_raw,/* tag */1,raw_unit_command);
 
-  ssvalue_t action={ssclass_kRECORD};
-  AddValue(&action,/* tag */1,action_raw);
+  ssvalue_t action={sstype_kRECORD};
+  ssvalue_member(&action,/* tag */1,action_raw);
 
-  ssvalue_t request_action={ssclass_kRECORD};
-  AddValue(&request_action,/* tag */1,action);
+  ssvalue_t request_action={sstype_kRECORD};
+  ssvalue_member(&request_action,/* tag */1,action);
 
   return AlistarSendPayload(ctx,11,&request_action);
 }
 static int
-AlistarRequestBuildDepot(AlistarContext *ctx, uint64_t unit_tag, Point2D location)
-{ ssvalue_t raw_unit_command={ssclass_kRECORD};
+AlistarRequestBuildDepot(context_t *ctx, uint64_t unit_tag, ssr32x2_t location)
+{ ssvalue_t raw_unit_command={sstype_kRECORD};
   AddVarint32Value(&raw_unit_command,1,319);
   AddVarint64Value(&raw_unit_command,4,unit_tag);
-  AddValue(&raw_unit_command,2,ValuePoint2D(location));
+  ssvalue_member(&raw_unit_command,2,ValuePoint2D(location));
 
-  ssvalue_t action_raw={ssclass_kRECORD};
-  AddValue(&action_raw,1,raw_unit_command);
+  ssvalue_t action_raw={sstype_kRECORD};
+  ssvalue_member(&action_raw,1,raw_unit_command);
 
-  ssvalue_t action={ssclass_kRECORD};
-  AddValue(&action,1,action_raw);
+  ssvalue_t action={sstype_kRECORD};
+  ssvalue_member(&action,1,action_raw);
 
-  ssvalue_t request_action={ssclass_kRECORD};
-  AddValue(&request_action,1,action);
+  ssvalue_t request_action={sstype_kRECORD};
+  ssvalue_member(&request_action,1,action);
 
   return AlistarSendPayload(ctx,11,&request_action);
 }
 static int
-AlistarQueryDistanceToFromUnit(AlistarContext *ctx, Unit *unit, Point2D pos)
+AlistarQueryDistanceToFromUnit(context_t *ctx, Unit *unit, ssr32x2_t pos)
 {
-  ssvalue_t req_query_pathing={ssclass_kRECORD};
+  ssvalue_t req_query_pathing={sstype_kRECORD};
   AddVarint64Value(&req_query_pathing,2,unit->tag);
-  AddValue(&req_query_pathing,3,ValuePoint2D(pos));
+  ssvalue_member(&req_query_pathing,3,ValuePoint2D(pos));
 
-  ssvalue_t req_query={ssclass_kRECORD};
-  AddValue(&req_query,1,req_query_pathing);
+  ssvalue_t req_query={sstype_kRECORD};
+  ssvalue_member(&req_query,1,req_query_pathing);
   return AlistarSendPayload(ctx,14,&req_query);
 }
 static int
-AlistarQueryBuildingPlacement(AlistarContext *ctx, int32_t ability_id, Point2D location)
+AlistarQueryBuildingPlacement(context_t *ctx, int32_t ability_id, ssr32x2_t location)
 {
-  ssvalue_t req_query_building_placement={ssclass_kRECORD};
+  ssvalue_t req_query_building_placement={sstype_kRECORD};
   AddVarint32Value(&req_query_building_placement,1,ability_id);
-  AddValue(&req_query_building_placement,2,ValuePoint2D(location));
+  ssvalue_member(&req_query_building_placement,2,ValuePoint2D(location));
 
-  ssvalue_t req_query={ssclass_kRECORD};
-  AddValue(&req_query,3,req_query_building_placement);
+  ssvalue_t req_query={sstype_kRECORD};
+  ssvalue_member(&req_query,3,req_query_building_placement);
   return AlistarSendPayload(ctx,14,&req_query);
 }
 static int
-AlistarSendChat(AlistarContext *ctx, int32_t channel, const char *message)
+AlistarSendChat(context_t *ctx, int32_t channel, const char *message)
 {
-  ssvalue_t action_chat={ssclass_kRECORD};
+  ssvalue_t action_chat={sstype_kRECORD};
   AddEnumValue(&action_chat,/* tag */1,channel);
   AddStringValue(&action_chat,/* tag */2,message);
 
-  ssvalue_t action={ssclass_kRECORD};
-  AddValue(&action,/* tag */6,action_chat);
+  ssvalue_t action={sstype_kRECORD};
+  ssvalue_member(&action,/* tag */6,action_chat);
 
-  ssvalue_t request_action={ssclass_kRECORD};
-  AddValue(&request_action,/* tag */1,action);
+  ssvalue_t request_action={sstype_kRECORD};
+  ssvalue_member(&request_action,/* tag */1,action);
 
   return AlistarSendPayload(ctx,11,&request_action);
 }
+#endif
+#endif
+
 static const wchar_t *
 AlistarActionResultW(ActionResult result)
 {
@@ -1190,6 +1094,7 @@ AlistarActionResultW(ActionResult result)
   }
   return L"internal error";
 }
+
 #elif defined(ALISTAR_ACTION_RESULT)
 ALISTAR_ACTION_RESULT(1,   Success)
 ALISTAR_ACTION_RESULT(2,   NotSupported)
