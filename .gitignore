@@ -1,4 +1,5 @@
 *.asm
 *.pdg
 *.obj
+*.exe
 vs
