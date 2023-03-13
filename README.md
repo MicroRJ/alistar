@@ -5,7 +5,7 @@ Experimental Standalone StartCraft II Bot API For The C Developer.
 
 ## Please note:
 - This is not a production ready project, it is simply a way to program
-  bots for SC II without having to use the bloat-some sc2 API.
+  bots for SC II without having to use the bloated sc2 API.
 - This project will only work on Windows ...
 ## Building
 - Clone this project using ```--recursive```
